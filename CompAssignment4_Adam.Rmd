@@ -1,0 +1,632 @@
+---
+title: "Computational Assignment 4"
+output: pdf_document
+author: Jason Adam
+date: August 4, 2019
+---
+
+# Objective  
+Use multiple regression to predict CHOLESTEROL using models with continuous and categorical variables. For these analyses, the response variable is $Y=CHOLESTEROL$, and the remaining variables will be considered explanatory (X's).  
+
+```{r knitr_options, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.align = "center")
+```
+
+```{r libraries}
+library(readr)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r data_load}
+n_df <- read_csv("NutritionStudy.csv")
+```
+
+```{r formulas_for_analysis}
+# Enhanced histogram function
+enhanced_hist <- function(x, title_alias) {
+  par(mfrow=c(1, 2))
+  skew <- round(moments::skewness(x), digits = 3)
+  kurtosis <- round(moments::kurtosis(x), digits = 3)
+  
+  #Histogram
+  hist(
+    x = x,
+    main = paste("Histogram of", title_alias),
+    xlab = title_alias,
+    col = "purple"
+  )
+  legend("topright",
+         legend = paste("kurtosis =", kurtosis, "&", "skew =", skew))
+  
+  # Boxplot
+  boxplot(
+    x = x,
+    main = paste("Boxplot of", title_alias),
+    xlab = title_alias,
+    col = "purple",
+    outcol = "red"
+    )
+}
+
+# Omnibus F-test calculation
+omnibus_f <- function(model, alpha = 0.95) {
+  # Calculate F-statistic
+  anova_obj <- anova(model)
+  ssy <- sum(anova_obj$`Sum Sq`)
+  sse_index <- length(anova_obj$`Sum Sq`)
+  sse <- anova_obj$`Sum Sq`[sse_index]
+  k <- sum(anova_obj$Df[-sse_index])
+  n <- sum(anova_obj$Df) + 1
+  num <- (ssy - sse) / k
+  denom <- sse / (n - k - 1)
+  f <- round(num / denom, digits = 4)
+  
+  # Calculate critical F Value
+  crit_f <- round(qf(alpha, k, (n - k - 1)), digits = 4)
+  
+  # Output: Determine if reject the null
+  if (f > crit_f) {
+    print(paste("F-statistic of", f, "is greater than the critical value of", crit_f))
+    print("We can REJECT the null hypothesis")
+  } else {
+    print(paste("F-statistic of", f, "is less than the critical value of", crit_f))
+    print("We FAIL TO REJECT the null hypothesis")
+  }
+}
+
+# Regression Diagnostics
+regression_diagnostics <-
+  function(model,
+           cooks_threshold = 1,
+           leverage_threshold = 2) {
+    # Cooks Distance
+    cooks_dist <- cooks.distance(model)
+    potential_outliers <- cooks_dist[cooks_dist > cooks_threshold]
+    if (length(potential_outliers) == 0) {
+      cooks_outliers <- 0
+    } else {
+      cooks_outliers <- potential_outliers
+    }
+    
+    # Leverage
+    hat_vals <- hatvalues(model)
+    k <- length(model$coefficients) - 1
+    n <- length(model$residuals)
+    hat_outliers <-
+      hat_vals[hat_vals > ((leverage_threshold * (k + 1)) / n)]
+    if (length(hat_outliers) == 0) {
+      hat_out <- 0
+    } else {
+      hat_out <- hat_outliers
+    }
+    return(list(
+      CooksDistanceOutliers = cooks_outliers,
+      LeverageOutliers = hat_out
+    ))
+  }
+
+reg_diag_print <- function(rd) {
+  if (sum(rd$CooksDistanceOutliers) == 0) {
+    print("There are no outliers based on Cook's distance.")
+  } else {
+    print(paste("There are", length(rd$CooksDistanceOutliers), "potential outliers based on Cook's distance."))
+  }
+  if (sum(rd$LeverageOutliers) == 0) {
+    print("There are no leverage outliers.")
+  } else {
+    print(paste("There are", length(rd$LeverageOutlier), "potential leverage outliers."))
+  }
+}
+
+# LM model plot
+plot_lm_diag <- function(model) {
+  par(mfrow = c(2,2))
+  plot(model)
+}
+
+# Function to Perform Partial F-Tests
+partial_f_test <- function(full_mod, partial_mod, alpha = 0.05) {
+  # Add ANOVA objects
+  full_anova <- anova(full_mod)
+  partial_anova <- anova(partial_mod)
+  
+  # Calculate sum of squares
+  full_regression_ss <-
+    sum(full_anova$`Sum Sq`[1:(length(full_anova$`Sum Sq`) - 1)])
+  reduced_regression_ss <-
+    sum(partial_anova$`Sum Sq`[1:(length(partial_anova$`Sum Sq`) - 1)])
+  
+  s <- sum(partial_anova$Df[1:(length(partial_anova$Df) - 1)])
+  df <- full_anova$Df[length(full_anova$Df)]
+  
+  # F-statistic computations
+  full_ms_residual <-
+    full_anova$`Sum Sq`[length(full_anova$`Sum Sq`)] / df
+  numerator <- (full_regression_ss - reduced_regression_ss) / s
+  denominator <- full_ms_residual
+  partial_f <- round(numerator / denominator, digits = 4)
+  
+  # Critical F
+  n <- sum(full_anova$Df) + 1
+  q_p <- sum(full_anova$Df[1:length(full_anova$Df) - 1])
+  df2 <- n - q_p - 1
+  critical_f <- round(qf(1 - alpha, s, df2), digits = 4)
+  
+  # Print based on reject or fail to reject
+  if (partial_f > critical_f) {
+    print(
+      paste(
+        "The F-statistic is",
+        partial_f,
+        "which is greater than the critical value of",
+        critical_f
+      )
+    )
+    print("Therefore we can REJECT the null hypothesis")
+  } else {
+    print(
+      paste(
+        "The F-statistic is",
+        partial_f,
+        "which is less than the critical value of",
+        critical_f
+      )
+    )
+    print("Therefore we FAIL TO REJECT the null hypothesis")
+  }
+}
+```
+
+# Setting the Stage  
+Below are the formula definitions that will be used for various tests. I'm purposefully referencing them here as to avoid redundantly typing them throughout the analysis.  
+
+**Omnibus Overall F-test**  
+
+The formula for calculating the F-statistic for overall model is:
+
+$$
+F=\frac{Mean\ Squared\ Regression}{Mean\ Squared\ Residual}=\frac{(\frac{(SSY-SSE)}{k})}{(\frac{SSE}{(n-k-1)})}
+$$
+
+The formula for calculating the critical F-statistic is:
+
+$$
+F_{k,\ n-k-1,\ 1-\alpha}
+$$
+
+The null hypothesis for the omnibus F-test is as follows:  
+
+$$
+Null=H_0:\beta_i=0\ for\ all\ i\ in\ the\ full\ model
+$$
+
+$$
+Alternate=H_a:\beta_i\neq0\ for\ at\ least\ 1\ i\ in\ the\ model
+$$
+
+**Leverage & Cook's Distance**  
+For reference, we will investigate values with cooks distance greater than 1 and leverage values greater than:  
+
+$$
+\frac{2*(k+1)}{n}
+$$
+
+**Partial F-test**  
+
+The formula for calculating a partial F-test is as follows:  
+
+$$
+F(X^{*}_1,X^{*}_2,...,X^{*}_i\ |\ X_1,X_2,...,X_j)=\frac{(\frac{SS(X^{*}_1,X^{*}_2,...,X^{*}_i\ |\ X_1,X_2,...,X_j)}{s})}{MS\ Residual\ (X^{*}_1,X^{*}_2,...,X^{*}_i,\ X_1,X_2,...,X_j)}
+$$
+
+Variables denoted as $X^*$ represent the additional interaction variables added to the model. The value $s$ represents the number of added independent variables.  
+
+The hypotheses can be stated as follows:  
+
+$$
+Null=H_0:\beta^{*}_1=\beta^{*}_2=...=\beta^{*}_i=0\ in\ the\ full\ model
+$$
+
+$$
+Alternate=H_a:\beta^{*}_i\neq0\ for\ at\ least\ 1\ i\ in\ the\ model
+$$
+
+The equation to calculate the F-statistic can be rewritten in order to easily use values from the model anova tables.  
+
+$$
+F(X^{*}_1,X^{*}_2,...,X^{*}_i\ |\ X_1,X_2,...,X_j)=\frac{(\frac{(Regression\ SS(full)-Regression\ SS(reduced))}{s})}{MS\ Residual(full)}
+$$
+
+# 1. Fiber vs Cholesterol EDA  
+Consider the continuous variable, FIBER. Is this variable correlated with Cholesterol? Obtain a scatterplot and appropriate statistics to address this question.
+
+```{r}
+plot(
+  n_df$Fiber,
+  n_df$Cholesterol,
+  main = "Fiber vs Cholesterol",
+  xlab = "Fiber",
+  ylab = "Cholesterol",
+  col = "purple",
+  pch = 16
+)
+```
+
+```{r}
+cor_one <- round(cor(x = n_df$Fiber, y = n_df$Cholesterol), digits = 3)
+```
+
+We can see from the scatterplot that there is possibly a very slight positive linear correlation between Fiber and Cholesterol. The Pearson correlation is `r cor_one` and confirms the slight positive linear correlation.
+
+# 2. Simple Linear Model  
+Fit a simple linear regression model that uses Fiber to predict Cholesterol (Y). Report the model, interpret the coefficients, discuss the goodness of fit.  
+
+## Model Summary  
+Below is the model summary.
+
+```{r}
+m1 <- lm(Cholesterol ~ Fiber, data = n_df)
+summary(m1)
+```
+
+We can see from the regression coefficients that the intercept is 193.701. This means that when Fiber is 0, Cholesterol is equal to 193.701. The slope of the regression line is equal to 3.813. This indicates that a 1 unit increase in Fiber (when all else held constant) will result in an increase in Cholesterol of 3.813 units. Based on the t-statistics and the p-values we can reject the null hypothesis for both the intercept and the regression coefficient that they are equal to zero. The adjusted R-squared value for the model is 0.02059. This indicates that Fiber only accounts for about 2% of the variance in Cholesterol. This is indicative of a poor model which is not surprising considering the scatterplot. There does not seem to be much of a relationship between these two variables.
+
+## Omnibus F Test  
+
+```{r}
+omnibus_f(m1)
+```
+
+## Model Diagnostics
+
+```{r, fig.width=10, fig.height=10, fig.align="center"}
+plot_lm_diag(m1)
+```
+
+```{r}
+m1_rd <- regression_diagnostics(m1)
+reg_diag_print(m1_rd)
+```
+
+Based on all the diagnostics of the model, Fiber is not a good predictor of Cholesterol on its own.  
+
+# 3. ANCOVA Model 1  
+For the ALCOHOL categorical variable, create a set of dummy coded (0/1) indicator variables.  Fit a multiple linear model that uses the FIBER continuous variable and the ALCOHOL dummy coded variables to predict the response variable Y=CHOLESTEROL.  Remember to leave one of the dummy coded variables out of the model so that you have a basis of interpretation for the constant term. Report the model, interpret the coefficients, discuss hypothesis test results, goodness of fit statistics, diagnostic graphs, and leverage, influence and Outlier statistics. This is called an Analysis of Covariance Model (ANCOVA).  
+
+```{r echo=TRUE}
+# Discretize Alcohol Variable
+n_df <- n_df %>%
+  mutate(AlcoholDisc = case_when(Alcohol == 0 ~ 1,
+                                 Alcohol < 10 ~ 2,
+                                 Alcohol >= 10 ~ 3))
+
+# Dummy Encode
+n_df <- n_df %>%
+  mutate(
+    AlcNone = case_when(AlcoholDisc == 1 ~ 1,
+                        TRUE ~ 0),
+    AlcLow = case_when(AlcoholDisc == 2 ~ 1,
+                       TRUE ~ 0),
+    AlcHigh = case_when(AlcoholDisc == 3 ~ 1,
+                        TRUE ~ 0)
+  )
+```
+
+## Model Summary  
+Below is the model summary. I chose to leave out the **AlcNone** dummy-encoded variable.
+
+```{r}
+m2 <- lm(Cholesterol ~ Fiber + AlcLow + AlcHigh, data = n_df)
+summary(m2)
+```
+
+The baseline model here consists of the intercept and the coefficient for Fiber. This is the regression equation when *AlcNone* is equal to 1 (since that is our baseline group). The intercept of 189.266 is the Cholesterol value for the AlcNone group when all other variables are equal to zero. The coefficient for Fiber (3.984) is the slope of our regression equation for the AlcNone group and indicates that for a one unit increase in Fiber, we can expect a 3.984 unit increase in Cholesterol when all other variables are held constant. As we move from AlcNone to AlcLow, the Y hat value will decrease by -2.523 units. This means that the lines for AlcNone and AlcLow are parallel and 2.523 units apart. When we move from AlcNone to AlcHigh, we get an increase in Y hat of 44.429. Overall, this indicates that all three lines are parallel with AlcLow being lower than AlcNone by 2.523 units and AlcHigh being higher than AlcNone by 44.429 units.
+
+## Omnibus F Test  
+
+```{r}
+omnibus_f(m2)
+```
+
+## Model Diagnostics
+
+```{r, fig.width=10, fig.height=10, fig.align="center"}
+plot_lm_diag(m2)
+```
+
+```{r}
+m2_rd <- regression_diagnostics(m2)
+reg_diag_print(m2_rd)
+```
+
+If we observe the diagnostic graphs, we can see several potential outliers on the Residuals vs Fitted graph (top left). We can also see quite a few values on the residuals vs leverage graph (bottom right) hence the resultant 33 potential data points calculated above.
+
+# 4. Scatterplots  
+4)	Use the ANCOVA model from task 3) to obtain predicted values for CHOLESTEROL(Y).  Now, make a scatterplot of the Predicted Values for Y (y-axis) by FIBER (X), but color code the records for the different groups of ALCOHOL. What do you notice about the patterns in the predicted values of Y?  Now, make a scatterplot of the actual values of CHOLESTEROL(Y) by FIBER (X), but color code by the different groups of the ALCOHOL variable. If you compare the two scatterplots, does the ANCOVA model appear to fit the observed data very well?  Or, is a more complex model needed?  
+
+```{r}
+n_df <- n_df %>%
+  mutate(AlcoholCategory = case_when(
+    AlcNone == 1 ~ "AlcNone",
+    AlcLow == 1 ~ "AlcLow",
+    AlcHigh == 1 ~ "AlcHigh"
+  ))
+
+n_df$m2_pred <- m2$fitted.values
+
+n_df %>%
+  ggplot(aes(x = Fiber, y = m2_pred, color = AlcoholCategory)) +
+  geom_point() +
+  ggtitle("Predicted Cholesterol vs Fiber (Grouped by Alcohol Usage)") +
+  ylab("Predicted Cholesterol") +
+  theme_classic() +
+  theme(legend.position = "bottom")
+```
+
+The patterns follow the parallel pattern indicated by their regression coefficients. We can see that AlcLow is slightly lower than AlcNone and AlcHigh is significantly higher than AlcNone.
+
+```{r}
+n_df %>%
+  ggplot(aes(x = Fiber, y = Cholesterol, color = AlcoholCategory)) +
+  geom_point() +
+  ggtitle("Cholesterol vs Fiber (Grouped by Alcohol Usage)") +
+  theme_classic() +
+  theme(legend.position = "bottom")
+```
+
+In observing the scatterplot of Cholesterol vs Fiber, it is clear that ANCOVA model does not fit the data very well. There is significant overlap in Cholesterol values for each of the Alcohol Groups.  
+
+# 5. Interactions  
+Create new interaction variables by multiplying the dummy coded variables for ALCOHOL by the continuous FIBER(X) variable. Save these product variables to your dataset. Now, to build the model, start with variables in your ANCOVA model from task 4) and add the interaction variables you just created into the multiple regression model.  Don’t forget, there is one category that is the basis of interpretation. DO NOT include any interaction term that is associated with that category. This is called an Unequal Slopes Model. Fit this model, and save the predicted values.  Plot the predicted values for CHOLESTEROL (Y) by FIBER(X). Discuss what you see in this graph.  In addition, report the model, interpret the coefficients, discuss hypothesis test results, goodness of fit statistics, diagnostic graphs, and leverage, influence and Outlier statistics.  
+
+## Model Summary  
+Below is the model summary. I left out *AlcNone* as well as it's interaction variable *AlcNone_Fiber* to establish a baseline.
+
+```{r}
+n_df <- n_df %>%
+  mutate(
+    AlcNone_Fiber = AlcNone * Fiber,
+    AlcLow_Fiber = AlcLow * Fiber,
+    AlcHigh_Fiber = AlcHigh * Fiber
+  )
+
+m3 <- lm(Cholesterol ~ Fiber + AlcLow + AlcHigh + AlcLow_Fiber + AlcHigh_Fiber, data = n_df)
+summary(m3)
+```
+
+The intercept of 230.34 represents the Cholesterol level of the baseline group AlcNone. The Fiber coefficient represents the slope of the regression equation for the AlcNone group and indicates that a one unit increase in Fiber will result in a 0.636 unit increase in Cholesterol when all else is held constant. The AlcLow coefficient (-62.85) represents the change in the intercept as we switch to the AlcLow group from AlcNone. The AlcLow_Fiber coefficient represents the change in slope as we shift from AlcNone to AlcLow. This means that the intercept will decrease and the slope will get steeper as we transition to AlcLow from AlcNone. The transition from AlcNone to AlcHigh follows the same scenario with the intercept decreasing and the slope increasing (getting steeper). This clearly indicates that the slopes are not the same for these Alcohol categories and that there is interaction occurring between Fiber and Alcohol Category. This can more clearly be seen in the following graph.
+
+```{r}
+n_df$m3_pred <- m3$fitted.values
+
+n_df %>%
+  ggplot(aes(x = Fiber, y = m3_pred, color = AlcoholCategory)) +
+  geom_point() +
+  ggtitle("Interaction Model Predicted Values") +
+  ylab("Predicted Cholesterol") +
+  theme_classic() +
+  theme(legend.position = "bottom")
+```
+
+It's clear from this graph that the slopes are not equal and there is considerable interaction occurring between Fiber and Alcohol level. All three of the Alcohol categories have different slopes. The graphic visualization of these differences really has helped me with the interpretation of the coefficients of the interaction terms.
+
+## Omnibus F Test  
+
+```{r}
+omnibus_f(m3)
+```
+
+## Model Diagnostics
+
+```{r, fig.width=10, fig.height=10, fig.align="center"}
+plot_lm_diag(m3)
+```
+
+```{r}
+m3_rd <- regression_diagnostics(m3)
+reg_diag_print(m3_rd)
+```
+
+# 6. Nested F-test  
+The null and alternate hypotheses have been stated above in the **Setting the Stage** portion of the report.  
+
+```{r}
+partial_f_test(full_mod = m3, partial_mod = m2)
+```
+
+We can see from the output that the addition of the interaction terms in the model don't add significant information for predicting Cholesterol. This also indicates that we can not say that our regression lines are not parallel. Since we're unable to reject this hypothesis, ANCOVA is an appropriate model for this data. There's not enough evidence to support saying that the slopes are unequal.  
+
+# 7. Additional Variables  
+Now that you’ve been exposed to these modeling techniques, it is time for you to use them in practice. Let’s examine more of the NutritionStudy data.  Use the above practiced techniques to determine if SMOKE, VITAMINS, or GENDER interacts with the FIBER variable and influences the amount of CHOLESTEROL. Formulate hypotheses, construct essential variables (as necessary), conduct the analysis and report on the results.  Which categorical variables are most predictive of CHOLESTEROL, in conjunction with FIBER.  
+
+```{r}
+n_df <- n_df %>%
+  mutate(
+    SmokeNo = case_when(Smoke == "No" ~ 1,
+                        TRUE ~ 0),
+    SmokeYes = case_when(Smoke == "Yes" ~ 1,
+                         TRUE ~ 0),
+    VitaminNo = case_when(VitaminUse == "No" ~ 1,
+                          TRUE ~ 0),
+    VitaminOcc = case_when(VitaminUse == "Occasional" ~ 1,
+                           TRUE ~ 0),
+    VitaminReg = case_when(VitaminUse == "Regular" ~ 1,
+                           TRUE ~ 0),
+    GenderMale = case_when(Gender == "Male" ~ 1,
+                           TRUE ~ 0),
+    GenderFemale = case_when(Gender == "Female" ~ 1,
+                             TRUE ~ 0)
+  )
+
+n_df <- n_df %>%
+  mutate(
+    SmokeNo_Fiber = SmokeNo * Fiber,
+    SmokeYes_Fiber = SmokeYes * Fiber,
+    VitaminNo_Fiber = VitaminNo * Fiber,
+    VitaminOcc_Fiber = VitaminOcc * Fiber,
+    VitaminReg_Fiber = VitaminReg * Fiber,
+    GenderMale_Fiber = GenderMale * Fiber,
+    GenderFemale_Fiber = GenderFemale * Fiber
+  )
+```
+
+## Smoke & Fiber  
+### Model Summary (No Interactions)  
+
+```{r}
+m4 <- lm(Cholesterol ~ Fiber + SmokeYes, data = n_df)
+summary(m4)
+```
+
+Our baseline represents the *SmokeNo* variable. The intercept and Fiber coefficients are representative of the regression equation for the baseline group. The SmokeYes coefficient indicates an increase in Y-hat of 45.738 as we switch from SmokeNo to SmokeYes. This can be observed in the following graph.
+
+```{r}
+n_df$m4_pred <- m4$fitted.values
+
+n_df %>%
+  ggplot(aes(x = Fiber, y = m4_pred, color = Smoke)) +
+  geom_point() +
+  ggtitle("Predicted Cholesterol vs Fiber (Grouped by Smoker)") +
+  theme_classic() +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+n_df %>%
+  ggplot(aes(x = Fiber, y = Cholesterol, color = Smoke)) +
+  geom_point() +
+  ggtitle("Cholesterol vs Fiber (Grouped by Smoker)") +
+  theme_classic() +
+  theme(legend.position = "bottom")
+```
+
+It appears from the scatterplot that there is quite a bit of overlap in smokers vs non-smokers.
+
+### Model Summary (Interaction Terms)  
+
+```{r}
+m5 <- lm(Cholesterol ~ Fiber + SmokeYes + SmokeYes_Fiber, data = n_df)
+summary(m5)
+```
+
+The SmokeYes_Fiber interaction coefficient indicates that as we move from SmokeNo to SmokeYes, the slope of the regression line with decrease slightly resulting in less of an increase in Cholesterol for a one unit increase in Fiber.
+
+### Partial F-test  
+
+```{r}
+partial_f_test(full_mod = m5, partial_mod = m4)
+```
+
+The partial F-test shows us that we can not conclude that the lines are not parallel.
+
+## Vitamins & Fiber  
+### Model Summary (No Interactions)  
+
+```{r}
+m6 <- lm(Cholesterol ~ Fiber + VitaminOcc + VitaminReg, data = n_df)
+summary(m6)
+```
+
+The baseline group for this model is those with no vitamin usage. The coefficients for VitaminOcc and VitaminReg indicate that Y-hat will decrease as we move from VitaminNone to the other groups. This means that Cholesterol will be lower along the regression line for those that use Vitamins. We can see this in the graphic below.
+
+```{r}
+n_df$m6_pred <- m6$fitted.values
+
+n_df %>%
+  ggplot(aes(x = Fiber, y = m6_pred, color = VitaminUse)) +
+  geom_point() +
+  ggtitle("Predicted Cholesterol vs Fiber (Grouped by Vitamin Use)") +
+  theme_classic() +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+n_df %>%
+  ggplot(aes(x = Fiber, y = Cholesterol, color = VitaminUse)) +
+  geom_point() +
+  ggtitle("Cholesterol vs Fiber (Grouped by Smoker)") +
+  theme_classic() +
+  theme(legend.position = "bottom")
+```
+
+### Model Summary (Interaction Terms)  
+
+```{r}
+m7 <- lm(Cholesterol ~ Fiber + VitaminOcc + VitaminReg + VitaminOcc_Fiber + VitaminReg_Fiber, data = n_df)
+summary(m7)
+```
+
+Our interaction coefficients show us that there is a slight increase in the slope of the regression line as we move from group VitaminNone_Fiber to VitaminOcc_Fiber and VitaminReg_Fiber. Both of the intercepts decrease while the slope increases slightly.
+
+### Partial F-test  
+
+```{r}
+partial_f_test(full_mod = m7, partial_mod = m6)
+```
+
+Despite the coefficients pointing to lines that aren't parallel, the partial f-test reveals that the interactions don't add any significant information for predicting Cholesterol.
+
+## Gender & Fiber  
+### Model Summary (No Interactions)  
+
+```{r}
+m8 <- lm(Cholesterol ~ Fiber + GenderFemale, data = n_df)
+summary(m8)
+```
+
+The baseline group in this model is GenderMale. The GenderFemale coefficient (-96.294) indicates that as we switch from Male to Female, the predicted value of cholesterol will drop by almost 100 units from it's baseline of 280.78. This difference can be seen below.
+
+```{r}
+n_df$m8_pred <- m8$fitted.values
+
+n_df %>%
+  ggplot(aes(x = Fiber, y = m8_pred, color = Gender)) +
+  geom_point() +
+  ggtitle("Predicted Cholesterol vs Fiber (Grouped by Gender)") +
+  theme_classic() +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+n_df %>%
+  ggplot(aes(x = Fiber, y = Cholesterol, color = Gender)) +
+  geom_point() +
+  ggtitle("Cholesterol vs Fiber (Grouped by Gender)") +
+  theme_classic() +
+  theme(legend.position = "bottom")
+```
+
+### Model Summary (Interaction Terms)  
+
+```{r}
+m9 <- lm(Cholesterol ~ Fiber + GenderFemale + GenderFemale_Fiber, data = n_df)
+summary(m9)
+```
+
+This model is quite interesting. The interaction between Gender and Fiber looks as if the slope changes as we switch from Male to Female. The intercept for Men is 473.87 and will reduce by 311.514 as we switch to female. The slope for men is negative and switches to positive for females. This indicates a strong interaction between Gender and Fiber.
+
+### Partial F-test  
+
+```{r}
+partial_f_test(full_mod = m9, partial_mod = m8)
+```
+
+The partial F-test allows us to reject the null hypothesis. This means that there is a significant interaction between Gender and Fiber as it pertains to explaining additional variance in Cholesterol. The following graphic shows the interaction effect with the Genders having opposite slopes.
+
+```{r}
+n_df$m9_pred <- m9$fitted.values
+
+n_df %>%
+  ggplot(aes(x = Fiber, y = m9_pred, color = Gender)) +
+  geom_point() +
+  ggtitle("Predicted Cholesterol vs Fiber (Grouped by Gender - With Interactions)") +
+  theme_classic() +
+  theme(legend.position = "bottom")
+```
+
+Overall, the only categorical variable that had a significant interaction with Fiber was Gender. We were able to show this through the partial F-test. Gender in conjunction with Fiber was the most predictive of Cholesterol. Despite this, the adjusted R-squared for the model was still extremely low indicating that there are other variables accounting for the variation in Cholesterol.  
+
+# Conclusion / Reflection  
+It took me a little bit to wrap my head around how ANCOVA works. The explanatory video in the module was very helpful in understanding how to interpret the regression coefficients, especially in the interaction terms. One thing that stands out is how it becomes increasingly difficult to interpret the more variables and interactions you add to a model. For these particular tasks, none of the models perform well in terms of accounting for variance in Cholesterol, but I suppose the point was to get our feet wet with modeling a continuous explanatory variable along with a dummy encoded categorical variable. I'm looking forward to experimenting further to build an good model that explains changes in cholesterol. Overall, the course is building up lots of techniques and toolkits to approaching a modeling problem.

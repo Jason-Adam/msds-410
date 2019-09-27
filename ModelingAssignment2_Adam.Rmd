@@ -1,0 +1,1136 @@
+---
+title: "Modeling Assignment 2"
+author: Jason Adam
+date: July 21, 2019
+output: pdf_document
+---
+
+# Introduction & Problem Statement  
+The Ames Housing dataset consists of 2,930 observations that represent property sales in Ames, IA from 2006 to 2010. The dataset contains 82 variables of each property transaction. The numerous amounts of property variables, including the sale price, lend themselves to the potential of constructing a model or models that can accurately predict the future sale price of properties. Initial work must be done regarding defining the sample population for future modeling work as well as performing exploratory analysis on different variables to determine their usefulness as potential predictors. The ultimate goal of this analysis is to provide estimates of home values for typical homes in Ames, Iowa.  
+  
+# Sample Definition  
+There are several sub-populations of property transactions present in the dataset. The objective of this particular analysis is to provide estimates of home values for ‘typical’ homes in Ames, Iowa, therefore a sub-sample of the original dataset was created. The table below represents a waterfall of filter conditions. These are conditions that have been filtered out of the original dataset in order to create a population that more accurately represents typical home sales.  
+
+```{r echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(readr)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(purrr)
+```
+
+```{r}
+# Load the dataset
+ames_df <-
+  read_csv("ames_housing_data.csv",
+           col_types = list("PoolQC" = col_character()))
+
+# Create some additional columns
+ames_df$TotalSF <- ames_df$FirstFlrSF + ames_df$SecondFlrSF
+ames_df$logSalePrice <- log(ames_df$SalePrice)
+ames_df$price_sqft <- ames_df$SalePrice / ames_df$TotalSF
+ames_df$TotalBsmtSF <- ames_df$BsmtFinSF1 + ames_df$BsmtFinSF2 + ames_df$BsmtUnfSF
+```
+
+```{r}
+# Subset the data; drop-out waterfall and 20 variables for EDA
+subset_df <- ames_df %>%
+  filter(
+    Zoning %in% c("RH", "RL", "RP", "RM", "FV"),
+    BldgType == "1Fam",
+    SaleCondition == "Normal",
+    GrLivArea < 4000
+  )
+
+# Drop Condition waterfall
+knitr::kable(
+  tibble(
+    `Drop Condition` = c(
+      "Non-Residential Zoning",
+      "Multi-Family Homes",
+      "Non-Normal Sale Conditions",
+      "Recommended Exclusions"
+    ),
+    `Observations Dropped` = c(29, 502, 411, 1),
+    `Remaining Observations` = c(2901, 2399, 1988, 1987)
+  )
+)
+```
+
+Non-residential zones were removed to ensure the data only contained residential areas. Additionally, multi-family homes were excluded along with non-normal sale conditions. The documentation associated with the
+dataset recommended removing properties greater than a certain threshold for above ground livable area (Square Feet) as they do not represent the population that is the focus of this analysis. The resultant sample for the analysis consists of 1,987 observations.  
+
+The variables that will be included initially in the analysis are all continuous with the exception of **OverallQual** which is discrete.  
+
+```{r}
+# Create model df of only continuous varibles per instructions
+model_df <- subset_df %>%
+  select(
+    SalePrice,
+    logSalePrice,
+    LotFrontage,
+    LotArea,
+    MasVnrArea,
+    BsmtFinSF1,
+    BsmtFinSF2,
+    BsmtUnfSF,
+    FirstFlrSF,
+    SecondFlrSF,
+    LowQualFinSF,
+    GrLivArea,
+    GarageArea,
+    WoodDeckSF,
+    OpenPorchSF,
+    ThreeSsnPorch,
+    ScreenPorch,
+    PoolArea,
+    MiscVal,
+    TotalSF,
+    price_sqft,
+    OverallQual,
+    TotalBsmtSF
+  )
+```
+
+# EDA  
+
+## Summary Statistics
+
+```{r}
+# Summary table of numeric variables
+myfunct1 <- function(x) {
+  c(
+    "SD" = round(sd(x, na.rm = TRUE), digits = 0),
+    "Mean" = round(mean(x, na.rm = TRUE), digits = 2),
+    "Med" = round(median(x ,na.rm = TRUE), digits = 0),
+    "Min" = round(min(x, na.rm = TRUE), digits = 0),
+    "Max" = round(max(x, na.rm = TRUE), digits = 0)
+  )
+}
+
+summary_numeric_df <- model_df %>%
+  map( ~ myfunct1(.)) %>%
+  as.data.frame()
+
+row_names <- row.names(summary_numeric_df)
+
+summary_numeric_df <- cbind(summary_numeric_df, row_names) %>%
+  gather(key = key, value = value,-row_names) %>%
+  spread(key = row_names, value = value)
+
+knitr::kable(summary_numeric_df)
+```
+
+We can see from the summary statistics table that a large number of the continuous variables have their minimum value as zero.  We'll briefly check for missing values prior to examining the distributions.  
+
+Below is a summary table of the variables with their count of missing values. The *MasVnrArea* variable will be imputed with zeros since it's possible that houses do not have that particular cosmetic feature. The *LotFrontage* variable will be imputed with the **Median** value. This variable represents the linear feet of street connected to the property so it doesn't make sense to impute to zero.
+
+## Missing Observations
+
+```{r}
+## Summary table of numeric variables
+myfunct2 <- function(x) {
+  c(
+    "NA Observations" = round(sum(is.na(x)))
+    #"Zero Obs" = round(sum(if_else(x == 0, 1, 0)))
+  )
+}
+
+na_df <- model_df %>%
+  map( ~ myfunct2(.)) %>%
+  as.data.frame()
+
+row_names <- row.names(na_df)
+
+na_df <- cbind(na_df, row_names) %>%
+  gather(key = key, value = value,-row_names) %>%
+  spread(key = row_names, value = value)
+
+na_df %>%
+  mutate(Variable = key) %>%
+  select(Variable, `NA Observations`) %>%
+  filter(`NA Observations` > 0) %>%
+  knitr::kable()
+```
+
+```{r}
+model_df <- model_df %>%
+  mutate(
+    LotFrontage = replace_na(LotFrontage, median(LotFrontage, na.rm = TRUE)),
+    MasVnrArea = replace_na(MasVnrArea, 0)
+  )
+```
+
+## Observations with Value of Zero  
+After imputing the missing values, I next checked for the count of zero values as a proportion of total observations.
+
+```{r}
+## Summary table of numeric variables
+myfunct3 <- function(x) {
+  c("Zero Obs" = round(sum(if_else(x == 0, 1, 0))))
+}
+
+zero_df <- model_df %>%
+  map(~ myfunct3(.)) %>%
+  as.data.frame()
+
+row_names <- row.names(zero_df)
+
+zero_df <- cbind(zero_df, row_names) %>%
+  gather(key = key, value = value, -row_names) %>%
+  spread(key = row_names, value = value)
+
+zero_df %>%
+  mutate(
+    "Zero Obs Percent" = scales::percent(`Zero Obs` / nrow(model_df), accuracy = 3L),
+    Variable = key
+  ) %>%
+  select(Variable, `Zero Obs`, `Zero Obs Percent`) %>%
+  knitr::kable()
+```
+
+The table shows that many variables have a very large proportion of zero valued observations. Several variables are going to be dropped from the analysis based on their lack of meaningful observations. I'll start by removing any variables that have > 5% of their observations as zero. Most of the continuous variables relate to a size measurement (sqft or area), and it's not practical to include variables that aren't representative of the population we're attempting to model. After removal, we are left with the following variables:  
+
+```{r}
+model_df <- model_df %>%
+  select(
+    GarageArea,
+    GrLivArea,
+    logSalePrice,
+    LotArea,
+    LotFrontage,
+    OverallQual,
+    price_sqft,
+    SalePrice,
+    TotalBsmtSF,
+    TotalSF
+  )
+
+vars_tbl <- tibble("Variable" = names(model_df))
+knitr::kable(vars_tbl)
+```
+
+```{r}
+model_df <- model_df %>%
+  filter(TotalBsmtSF > 0 & GarageArea >0)
+```
+
+Since several of these variables have a very small percentage of zero valued observations, I'm going to drop those cumulative observations from the data set. This results in a total of `r nrow(model_df)` available for the next steps of EDA.
+
+## Scatterplots vs Independent Variable  
+Below represents a scatterplot of the remaining dependent variables vs the Sale Price. We can see from the preliminary graphs that there are potentially significant outliers in some of the variables.
+
+```{r scatter_matrix, fig.width=10, fig.height=10}
+par(mfrow = c(4, 2))
+
+
+sub_df <- model_df %>%
+  select(
+    SalePrice,
+    GarageArea,
+    GrLivArea,
+    LotArea,
+    LotFrontage,
+    OverallQual,
+    TotalBsmtSF,
+    TotalSF
+  )
+
+for (i in 2:length(sub_df)) {
+  plot(
+    x = sub_df[[i]],
+    y = sub_df[[1]],
+    main = paste(names(sub_df[, 1]), "vs", names(sub_df[, i])),
+    xlab = names(sub_df[, i]),
+    ylab = names(sub_df[, 1]),
+    col = "purple",
+    pch = 16,
+    cex = 2
+  )
+}
+```
+
+## Linear Correlations  
+
+```{r fig.width=10, fig.height=10}
+model_df %>%
+  select(-logSalePrice, -price_sqft) %>%
+  cor() %>%
+  corrplot::corrplot(addCoef.col = TRUE)
+```
+
+We can see from the correlation matrix that several of the independent variables have a strong positive linear correlation with the dependent variable. TotalSF and OverallQual both have strong positive correlations. TotalSF and GrLivArea have a perfect positive linear correlation which makes sense as GrLivArea is encapsulated by Total SF. This indicates that we can most likely drop GrLivArea from the model and it will not have an effect.  
+
+## Outlier Detection  
+
+```{r}
+# Extreme Outliers for 3 variables
+LotAreaOutliers <- boxplot.stats(model_df$LotArea, coef = 3.0)$out
+LotFrontageOutliers <- boxplot.stats(model_df$LotFrontage, coef = 3.0)$out
+GarageAreaOutliers <- boxplot.stats(model_df$GarageArea, coef = 3.0)$out
+```
+
+### Histograms  
+Below we can see histograms for all of our continuous variables. It is apparent that LotArea and LotFrontage both have a heavy right skew due to outliers. SalePrice also appears to have a slight right skew. logSalePrice might be a better response variable.
+
+```{r fig.width=10, fig.height=10}
+par(mfrow = c(4,2))
+
+# Histograms for all continous variables
+hist_df <- model_df %>% select(-OverallQual)
+
+for (i in 2:length(hist_df)) {
+  hist(
+    x = hist_df[[i]],
+    main = names(hist_df[, i]),
+    xlab = names(hist_df[, i]),
+    col = "purple",
+  )
+}
+```
+
+Based on the histograms and the scatterplots I've chosen to remove the extreme outlier values (3 times the IQR) from LotArea, LotFrontage, and GarageArea. Below are the histograms of the three variables after the extreme outlier observations have been removed.
+
+```{r}
+# Filter the extreme outliers
+model_df <- model_df %>%
+  filter(
+    !LotArea %in% LotAreaOutliers,!LotFrontage %in% LotFrontageOutliers,!GarageArea %in% GarageAreaOutliers
+  )
+```
+
+```{r fig.width=10, fig.height=5}
+# Graph the new variables with outliers removed
+par(mfrow = c(1, 3))
+
+hist(model_df$LotArea, col = "purple", main = "LotArea")
+hist(model_df$LotFrontage, col = "purple", main = "LotFrontage")
+hist(model_df$GarageArea, col = "purple", main = "GarageArea")
+```
+
+This leaves us with a total of `r nrow(model_df)` observations prior to beginning modeling.  
+
+# Part A: Simple Linear Regression Models  
+## Section 1:  
+Let Y = sale price be the dependent or response variable. Select “the best” continuous explanatory variable from the AMES data set to predict Y.What criteria did you use to select this variable? Fit a simple linear regression model using X to predict Y.  Call this Model 1. You should:  
+
+### 1a. Make a scatterplot of Y and X, and overlay the regression line on the cloud of data.  
+I chose TotalSF as the first variable because it had the highest linear correlation with Sale Price (highest of the continuous variables).
+
+```{r fig.align="center"}
+model_df %>%
+  ggplot(aes(x = TotalSF, y = SalePrice)) +
+  geom_point(color = "purple") +
+  geom_smooth(formula = y ~ x, method = "lm", color = "red") +
+  ggtitle("Sale Price vs Total Square Feet") +
+  theme_bw()
+```
+
+### 1b. Model Equation  
+Below is the summary computed from Model 1.  
+
+```{r}
+model_1 <- lm(model_df$SalePrice ~ model_df$TotalSF)
+summary(model_1)
+```
+
+The equation can be written as follows:  
+
+$$
+\hat{Y}=13549+112.150X
+$$
+
+The intercept term (13549) represents the price if the square feet were equal to zero. This holds no value contextually. The regression coefficient of 112.150 represents a $112.15 increase in Sale Price for a 1 unit increase in Square feet (assuming all else held constant).  
+
+### 1c. Report and Interpret R-squared value in the context of this problem.  
+The R-squared value for Model 1 is **0.5932**. This means that the TotalSF variable accounts for approximately 59% of the variance in SalePrice. Contextually it makes sense that TotalSF is a main driver of price as homes are typically priced at a per/sqft amount. As the size increases, so does the SalePrice.  
+
+### 1d. Report the coefficients and ANOVA tables. Specify the hypotheses associated with each coefficient of the model and the hypothesis for the omnibus model. Conduct and interpret the hypothesis tests.  
+
+Hypothesis tests were conducted on the model coefficient using a two-sided t-test. Prior to stating the hypothesis, I am going to establish the type I error threshold at $\alpha=0.05$. The critical t value in this t-distribution is calculated with the following formula:  
+
+```{r}
+#Critical t-statistic
+#t(0.975, 1829)
+```
+
+$$
+t_{n-2,\ 1-\frac{\alpha}{2}}=t_{1829,\ 0.975}=1.9613
+$$
+
+The following formula will be used to calculate the Test Statistic (T) for each of the regression coefficients.  
+
+$$
+T=\frac{(\hat\beta_i-\beta^{(0)}_i)}{S_{\hat\beta_i}}
+$$
+
+If the absolute value of our coefficient t-statistics greater than 1.9613 we can reject the null hypothesis that the coefficient is equal to zero. The null and alternate hypotheses for each regression coefficient are stated below.  
+
+**Intercept**
+
+$$
+Null=H_0:\beta_0=0
+$$
+
+$$
+Alternate=H_a:\beta_0\neq0
+$$
+
+The test statistic for the intercept is:  
+
+$$
+T=\frac{(13549.890-0)}{3421.962}=3.96
+$$
+
+This indicates that we should reject the null hypothesis. The intercept holds no contextual value in this problem as we can not have a zero square foot house.
+
+**TotalSF**  
+
+$$
+Null=H_0:\beta_1=0
+$$
+
+$$
+Alternate=H_a:\beta_1\neq0
+$$
+
+The test statistic for TotalSF is:  
+
+$$
+T=\frac{112.150-0)}{2.173}=51.62
+$$
+
+This value indicates that we should reject the null hypothesis. This means that TotalSF provides significant information for predicting Sale Price at a type I error rate of 0.05.  
+
+**Omnibus Overall F-test**  
+
+The formula for calculating the F-statistic for overall model is:
+
+$$
+F=\frac{Mean\ Squared\ Regression}{Mean\ Squared\ Residual}=\frac{(\frac{(SSY-SSE)}{k})}{(\frac{SSE}{(n-k-1)})}
+$$
+
+The following is the ANOVA table from Model 1. The values will be used to calculate the overall F-statistic.
+
+```{r}
+anova(model_1)
+```
+
+The hypotheses are as follows:  
+
+$$
+Null=H_0:\beta_1=0
+$$
+
+$$
+Alternate=H_a:\beta_1\neq0
+$$
+
+The F-statistic is calculated as follows:  
+
+```{r echo=TRUE}
+# Write ANOVA results to dataframe
+anova_1 <- anova(model_1)
+
+# Extract SSY & SSE
+SSY <- sum(anova_1$`Sum Sq`)
+SSE <- anova_1$`Sum Sq`[2]
+
+# Define k & n
+k <- 1
+n <- nrow(model_df)
+
+# Calculate numerator and denominator
+numerator_f <- (SSY - SSE) / k
+denominator_f <-  SSE / (n - k - 1)
+
+# Calculate F
+F <- round(numerator_f / denominator_f)
+
+# Output
+print(paste("The F-statistic =", F))
+```
+
+The critical F value is calculated with the following:  
+
+$$
+F_{k,\ n-k-1,\ 1-\alpha}=F_{1,\ 1829-1-1,\ 1-0.05}=3.8466
+$$
+
+The F-statistic of 2664 is much greater than the critical value of 3.8466 This allows us to reject the null hypothesis. This indicates that there is a significant relationship between the independent variable and the response variable.  
+
+### 1e. Compute & Visualize Residuals  
+Discuss any deviations from normality or patterns in the residuals that indicate heteroscedasticity.  Do there appear to be outliers or influential points?  
+
+```{r fig.align="center"}
+# Calculate Residuals
+model_1_pred <- predict(model_1, model_df)
+model_1_resid <- model_df$SalePrice - model_1_pred
+mean_resid <- mean(model_1_resid)
+std_resid <- sd(model_1_resid)
+model_1_std_resid <- (model_1_resid - mean_resid) / std_resid
+
+# Histogram of Standardized Residuals
+hist(model_1_std_resid,
+     main = "Histogram of Model 1 Standardized Residuals",
+     xlab = "Model 1 Standardized Residuals",
+     col = "orange")
+```
+
+```{r fig.align="center"}
+# Scatterplot
+plot(
+  model_1_pred,
+  model_1_std_resid,
+  col = "orange",
+  main = "Standardized Residuals vs Predicted Y",
+  xlab = "Predicted Y Value",
+  ylab = "Standardized Residuals"
+)
+```
+
+The scatterplot indicates that the error variance increases as $\hat{Y}$ increases. This is a sign of heteroscedasticity. We expect the error variance to be constant as $\hat{Y}$ increases. The histogram indicates a slight right skew, but generally follows a normal distribution. There appears to be 3 points at the top of the scatterplot that could be potential outliers or influential points. They have the highest residual values.  
+
+## Section 2:  
+(2)	Let Y = sale price be the dependent or response variable. Use the OVERALL QUALITY variable as the explanatory variable (X) to predict Y. Fit a simple linear regression model using X to predict Y. Call this Model 2.  You should:  
+
+### 2a. Make a scatterplot of Y and X, and overlay the regression line on the cloud of data.  
+
+```{r fig.align="center"}
+model_df %>%
+  ggplot(aes(x = OverallQual, y = SalePrice)) +
+  geom_point(color = "purple") +
+  geom_smooth(formula = y ~ x, method = "lm", color = "red") +
+  ggtitle("Sale Price vs Overall Quality") +
+  theme_bw()
+```
+
+### 2b. Model Equation  
+Below is the summary computed from Model 2.  
+
+```{r}
+model_2 <- lm(model_df$SalePrice ~ model_df$OverallQual)
+summary(model_2)
+```
+
+The equation can be written as follows:  
+
+$$
+\hat{Y}=-87243.3+44196.6X
+$$
+
+The regression coefficient in this equation can be interpreted as a 1 unit increase in Overall Quality results in an increase of $44,196.6 to the Sale Price. The OverallQual variable is ordinal, not continuous, therefore this is a difficult interpretation. There are only 10 values that the score can be, and each score has a range of sale prices. An ordinal value would indicate that there were only 10 different sale prices that would ultimately be predicted. This will result in significant prediction error.  
+
+### 2c. Interpret the R-squared value in the context of the problem.  
+The R-squared value of Model 2 is **0.6569**. This means that approximately 66% percent of the variation in SalePrice is accounted for by OverallQual.  
+
+### 2d. Report the coefficients and ANOVA tables. Specify the hypotheses associated with each coefficient of the model and the hypothesis for the omnibus model. Conduct and interpret the hypothesis tests.  
+I've chose to ignore the intercept coefficient going forward. It holds no value in the context of this problem and to continually restate that is redundant.
+
+**OverallQual**  
+
+$$
+Null=H_0:\beta_1=0
+$$
+
+$$
+Alternate=H_a:\beta_1\neq0
+$$
+
+The test statistic for OverallQual is:  
+
+$$
+T=\frac{44196.6-0)}{747.3}=59.15
+$$
+
+This value indicates that we should reject the null hypothesis. This means that OverallQual provides significant information for predicting Sale Price at a type I error rate of 0.05.  
+
+**Omnibus Overall F-test**  
+
+The formula for calculating the F-statistic for overall model is:
+
+$$
+F=\frac{Mean\ Squared\ Regression}{Mean\ Squared\ Residual}=\frac{(\frac{(SSY-SSE)}{k})}{(\frac{SSE}{(n-k-1)})}
+$$
+
+The following is the ANOVA table from Model 2. The values will be used to calculate the overall F-statistic.
+
+```{r}
+anova(model_2)
+```
+
+The hypotheses are as follows:  
+
+$$
+Null=H_0:\beta_1=0
+$$
+
+$$
+Alternate=H_a:\beta_1\neq0
+$$
+
+The F-statistic is calculated as follows:  
+
+```{r echo=TRUE}
+# Write ANOVA results to dataframe
+anova_2 <- anova(model_2)
+
+# Extract SSY & SSE
+SSY <- sum(anova_2$`Sum Sq`)
+SSE <- anova_2$`Sum Sq`[2]
+
+# Define k & n
+k <- 1
+n <- nrow(model_df)
+
+# Calculate numerator and denominator
+numerator_f <- (SSY - SSE) / k
+denominator_f <-  SSE / (n - k - 1)
+
+# Calculate F
+F <- round(numerator_f / denominator_f)
+
+# Output
+print(paste("The F-statistic =", F))
+```
+
+The critical F value is calculated with the following:  
+
+$$
+F_{k,\ n-k-1,\ 1-\alpha}=F_{1,\ 1829-1-1,\ 1-0.05}=3.8466
+$$
+
+The F-statistic of 3498 is much greater than the critical value of 3.8466 This allows us to reject the null hypothesis. This indicates that there is a significant relationship between the independent variable and the response variable. 
+
+### 2e. Compute & Visualize Residuals  
+Discuss any deviations from normality or patterns in the residuals that indicate heteroscedasticity.  Do there appear to be outliers or influential points?  
+
+```{r fig.align="center"}
+# Calculate Residuals
+model_2_pred <- predict(model_2, model_df)
+model_2_resid <- model_df$SalePrice - model_2_pred
+mean_resid <- mean(model_2_resid)
+std_resid <- sd(model_2_resid)
+model_2_std_resid <- (model_2_resid - mean_resid) / std_resid
+
+# Histogram of Standardized Residuals
+hist(model_2_std_resid,
+     main = "Histogram of Model 2 Standardized Residuals",
+     xlab = "Model 2 Standardized Residuals",
+     col = "orange")
+```
+
+```{r fig.align="center"}
+# Scatterplot
+plot(
+  model_2_pred,
+  model_2_std_resid,
+  col = "orange",
+  main = "Standardized Residuals vs Predicted Y",
+  xlab = "Predicted Y Value",
+  ylab = "Standardized Residuals"
+)
+```
+
+The scatterplot indicates that the error variance increases as $\hat{Y}$ increases. This is a sign of heteroscedasticity. We expect the error variance to be constant as $\hat{Y}$ increases. The histogram indicates a slight right skew, but generally follows a normal distribution. There appears to be several points at the top of the scatterplot that could be potential outliers or influential points. They have the highest residual values.  
+
+## Section: 3  
+*Of the above 2 models, which one fits better? On what criteria are you assessing the model fit?*  
+
+Based on the R-squared value and the F-Statistic, it would appear that Model 2 outperforms Model 1 in terms of accuracy. Model 2 accounts for a bigger proportion of variance in SalePrice than Model 1. This result does not seem intuitive to me considering OverallQual is an ordinal variable. This means that there will only ever be 10 different predictions for the Sale Price of a home. I think that OverallQual will be more impactful when combined with another variable like TotalSF (Next section).  
+
+# Part B: Multiple Linear Regression Models  
+## Section 4:  
+Fit a multiple regression model that uses 2 continuous explanatory (X) variables to predict Sale Price (Y). These two explanatory(X) variables should be: the explanatory variables from Model 1 and Model 2 above. Call this Model 3.  You should:  
+
+### 4a. Report Model 3 in equation form and interpret each coefficient of the model in the context of this problem. Is there something different about the coefficient interpretations here relative to the simple linear regression models above?  
+
+```{r}
+model_3 <- lm(model_df$SalePrice ~ model_df$TotalSF + model_df$OverallQual)
+summary(model_3)
+```
+
+The Model 3 equation is as follows:  
+
+$$
+\hat{Y}=-91406.752+62.729X_1+29416.781X_2
+$$
+
+Again, the intercept is meaningless in the context of this problem. $\beta_1$ can be interpreted as a 1 unit increase in TotalSF will result in an increase of \$62.73 in SalePrice if all other variables are held constant. $\beta_2$ can be interpreted as a 1 unit increase in the OverallQual score will result in an increase of \$29,416.78 in SalePrice if all other variables are held constant. Both of the coefficients have decreased in the combined model respective to their individual models.  
+
+### 4b. Report and interpret the R-squared value in the context of this problem. Does this multiple linear regression model fit better than the simple linear regression models? How do you know? Calculate the difference between R-squared for Model 3 and R-squared for Model 1. How would you interpret this difference?  
+The multiple R-squared value for Model 3 is **0.769**. Model 3 accounts for more variance in the response variable than model 1. The difference between the two values is **0.1758**. This means that Model 3 is accounting for an additional %17.58 of variance in SalePrice. Since the R-squared value increases with each additional independent variable, the adjusted R-squared value is a more appropriate comparison as it applies a penalty factor to unimportant independent variables being added to the model. The adjusted R-squared value is the same as the R-squared for Model 3 indicating that the increase of the proportion of variance accounted for is valid.
+
+### 4c. Report the coefficient and ANOVA Tables. Specify the hypotheses associated with each coefficient of the model and the hypothesis for the omnibus model. Conduct and interpret the hypothesis tests.  
+
+I've chose to ignore the intercept coefficient going forward. It holds no value in the context of this problem and to continually restate that is redundant.
+
+**TotalSF**  
+
+$$
+Null=H_0:\beta_1=0
+$$
+
+$$
+Alternate=H_a:\beta_1\neq0
+$$
+
+The test statistic for TotalSF is:  
+
+$$
+T=\frac{62.729-0)}{2.107}=29.77
+$$
+
+This value indicates that we should reject the null hypothesis. This means that TotalSF provides significant information for predicting Sale Price at a type I error rate of 0.05.  
+
+**OverallQual**  
+
+$$
+Null=H_0:\beta_2=0
+$$
+
+$$
+Alternate=H_a:\beta_2\neq0
+$$
+
+The test statistic for OverallQual is:  
+
+$$
+T=\frac{29416.781-0)}{789.012}=37.28
+$$
+
+This value indicates that we should reject the null hypothesis. This means that OverallQual provides significant information for predicting Sale Price at a type I error rate of 0.05.  
+
+**Omnibus Overall F-test**  
+
+The formula for calculating the F-statistic for overall model is:
+
+$$
+F=\frac{Mean\ Squared\ Regression}{Mean\ Squared\ Residual}=\frac{(\frac{(SSY-SSE)}{k})}{(\frac{SSE}{(n-k-1)})}
+$$
+
+The following is the ANOVA table from Model 3. The values will be used to calculate the overall F-statistic.
+
+```{r}
+anova(model_3)
+```
+
+The hypotheses are as follows:  
+
+$$
+Null=H_0:\beta_1=\beta_2=0
+$$
+
+$$
+Alternate=H_a:\beta_1\neq0\ or\ \beta_2\neq0
+$$
+
+The F-statistic is calculated as follows:  
+
+```{r echo=TRUE}
+# Write ANOVA results to dataframe
+anova_3 <- anova(model_3)
+
+# Extract SSY & SSE
+SSY <- sum(anova_3$`Sum Sq`)
+SSE <- anova_3$`Sum Sq`[3]
+
+# Define k & n
+k <- 2
+n <- nrow(model_df)
+
+# Calculate numerator and denominator
+numerator_f <- (SSY - SSE) / k
+denominator_f <-  SSE / (n - k - 1)
+
+# Calculate F
+F <- round(numerator_f / denominator_f)
+
+# Output
+print(paste("The F-statistic =", F))
+```
+
+The critical F value is calculated with the following:  
+
+$$
+F_{k,\ n-k-1,\ 1-\alpha}=F_{2,\ 1829-2-1,\ 1-0.05}=3.0007
+$$
+
+The F-statistic of 3040 is much greater than the critical value of 3.0007 This allows us to reject the null hypothesis. This indicates that there is a significant relationship between the independent variables and the response variable. However, this does not indicate which variables are meaningful.  
+
+### 4d. Compute & Visualize Residuals  
+Discuss any deviations from normality or patterns in the residuals that indicate heteroscedasticity.  
+
+```{r fig.align="center"}
+# Calculate Residuals
+model_3_pred <- predict(model_3, model_df)
+model_3_resid <- model_df$SalePrice - model_3_pred
+mean_resid <- mean(model_3_resid)
+std_resid <- sd(model_3_resid)
+model_3_std_resid <- (model_3_resid - mean_resid) / std_resid
+
+# Histogram of Standardized Residuals
+hist(model_3_std_resid,
+     main = "Histogram of Model 3 Standardized Residuals",
+     xlab = "Model 3 Standardized Residuals",
+     col = "orange")
+```
+
+```{r fig.align="center"}
+# Scatterplot
+plot(
+  model_3_pred,
+  model_3_std_resid,
+  col = "orange",
+  main = "Standardized Residuals vs Predicted Y",
+  xlab = "Predicted Y Value",
+  ylab = "Standardized Residuals"
+)
+```
+
+The scatterplot indicates that the error variance increases as $\hat{Y}$ increases. This is a sign of heteroscedasticity. We expect the error variance to be constant as $\hat{Y}$ increases. The histogram indicates a slight right skew, but generally follows a normal distribution. There appears to be several points at the top of the scatterplot that could be potential outliers or influential points. They have the highest residual values.  
+
+### 4e. Based on this information, should you want to retain both variables as predictor variables of Y? Discuss why or why not.  
+I would retain both variables in the model. Combined, they account for a much larger proportion of variance in the response variable than a single variable model.  
+
+## Section 5:  
+Select any other continuous variable you wish. Fit a multiple regression model that uses 3 continuous explanatory (X) variables to predict Sale Price (Y). These three variables should be your variable of choice plus the explanatory variables from Model 3. Call this Model 4. You should:  
+
+### 5a. Report Model 4 in equation form and interpret each coefficient of the model in the context of this problem. Is there something different about the coefficient interpretations here relative to the simple linear regression models above?  
+
+```{r}
+model_4 <- lm(model_df$SalePrice ~ model_df$TotalSF + model_df$OverallQual + model_df$TotalBsmtSF)
+summary(model_4)
+```
+
+The Model 4 equation is as follows:  
+
+$$
+\hat{Y}=-101455.5643+57.3082X_1+23001.7556X_2+53.9852X_3
+$$
+
+Again, the intercept is meaningless in the context of this problem. $\beta_1$ can be interpreted as a 1 unit increase in TotalSF will result in an increase of \$57.31 in SalePrice if all other variables are held constant. $\beta_2$ can be interpreted as a 1 unit increase in the OverallQual score will result in an increase of \$23,001.76 in SalePrice if all other variables are held constant. $\beta_3$ can be interpreted as a 1 unit increase in the TotalBmstSF will result in an increase of \$53.99 in SalePrice if all other variables are held constant. Both of the coefficients from model 3 have decreased in model 4 with the addition of TotalBsmtSF.  
+
+### 5b. Report and interpret the R-squared value in the context of this problem. Does this multiple linear regression model fit better than the simple linear regression models? How do you know? Calculate the difference between R-squared for Model 4 and R-squared for Model 3. How would you interpret this difference?  
+The multiple R-squared value for Model 4 is **0.8307**. Model 4 accounts for more variance in the response variable than model 3. The difference between the two values is **0.0617**. This means that Model 4 is accounting for an additional %6.2 of variance in SalePrice. Since the R-squared value increases with each additional independent variable, the adjusted R-squared value is a more appropriate comparison as it applies a penalty factor to unimportant independent variables being added to the model. The adjusted R-squared value is the same as the R-squared for Model 3 indicating that the increase of the proportion of variance accounted for is valid.
+
+### 5c. Report the coefficient and ANOVA Tables. Specify the hypotheses associated with each coefficient of the model and the hypothesis for the omnibus model. Conduct and interpret the hypothesis tests.  
+
+I've chose to ignore the intercept coefficient going forward. It holds no value in the context of this problem and to continually restate that is redundant.
+
+**TotalSF**  
+
+$$
+Null=H_0:\beta_1=0
+$$
+
+$$
+Alternate=H_a:\beta_1\neq0
+$$
+
+The test statistic for TotalSF is:  
+
+$$
+T=\frac{57.3082-0)}{1.817}=31.55
+$$
+
+This value indicates that we should reject the null hypothesis. This means that TotalSF provides significant information for predicting Sale Price at a type I error rate of 0.05.  
+
+**OverallQual**  
+
+$$
+Null=H_0:\beta_2=0
+$$
+
+$$
+Alternate=H_a:\beta_2\neq0
+$$
+
+The test statistic for OverallQual is:  
+
+$$
+T=\frac{23001.7556-0)}{720.1}=31.94
+$$
+
+This value indicates that we should reject the null hypothesis. This means that OverallQual provides significant information for predicting Sale Price at a type I error rate of 0.05.  
+
+**TotalBsmtSF**  
+
+$$
+Null=H_0:\beta_3=0
+$$
+
+$$
+Alternate=H_a:\beta_3\neq0
+$$
+
+The test statistic for TotalBsmtSF is:  
+
+$$
+T=\frac{53.9852-0)}{2.094}=25.78
+$$
+
+This value indicates that we should reject the null hypothesis. This means that TotalBsmtSF provides significant information for predicting Sale Price at a type I error rate of 0.05.  
+
+**Omnibus Overall F-test**  
+
+The formula for calculating the F-statistic for overall model is:
+
+$$
+F=\frac{Mean\ Squared\ Regression}{Mean\ Squared\ Residual}=\frac{(\frac{(SSY-SSE)}{k})}{(\frac{SSE}{(n-k-1)})}
+$$
+
+The following is the ANOVA table from Model 4. The values will be used to calculate the overall F-statistic.
+
+```{r}
+anova(model_4)
+```
+
+The hypotheses are as follows:  
+
+$$
+Null=H_0:\beta_1=\beta_2=\beta_3=0
+$$
+
+$$
+Alternate=H_a:\beta_1\neq0\ or\ \beta_2\neq0\ or\ \beta_3\neq0
+$$
+
+The F-statistic is calculated as follows:  
+
+```{r echo=TRUE}
+# Write ANOVA results to dataframe
+anova_4 <- anova(model_4)
+
+# Extract SSY & SSE
+SSY <- sum(anova_4$`Sum Sq`)
+SSE <- anova_4$`Sum Sq`[4]
+
+# Define k & n
+k <- 3
+n <- nrow(model_df)
+
+# Calculate numerator and denominator
+numerator_f <- (SSY - SSE) / k
+denominator_f <-  SSE / (n - k - 1)
+
+# Calculate F
+F <- round(numerator_f / denominator_f)
+
+# Output
+print(paste("The F-statistic =", F))
+```
+
+The critical F value is calculated with the following:  
+
+$$
+F_{k,\ n-k-1,\ 1-\alpha}=F_{3,\ 1829-3-1,\ 1-0.05}=2.6098
+$$
+
+The F-statistic of 2984 is much greater than the critical value of 2.6098 This allows us to reject the null hypothesis. This indicates that there is a significant relationship between the independent variables and the response variable. However, this does not indicate which variables are meaningful.  
+
+### 4d. Compute & Visualize Residuals  
+Discuss any deviations from normality or patterns in the residuals that indicate heteroscedasticity.  
+
+```{r fig.align="center"}
+# Calculate Residuals
+model_4_pred <- predict(model_4, model_df)
+model_4_resid <- model_df$SalePrice - model_4_pred
+mean_resid <- mean(model_4_resid)
+std_resid <- sd(model_4_resid)
+model_4_std_resid <- (model_4_resid - mean_resid) / std_resid
+
+# Histogram of Standardized Residuals
+hist(model_4_std_resid,
+     main = "Histogram of Model 4 Standardized Residuals",
+     xlab = "Model 4 Standardized Residuals",
+     col = "orange")
+```
+
+```{r fig.align="center"}
+# Scatterplot
+plot(
+  model_4_pred,
+  model_4_std_resid,
+  col = "orange",
+  main = "Standardized Residuals vs Predicted Y",
+  xlab = "Predicted Y Value",
+  ylab = "Standardized Residuals"
+)
+```
+
+The scatterplot indicates that the error variance increases as $\hat{Y}$ increases. This is a sign of heteroscedasticity. We expect the error variance to be constant as $\hat{Y}$ increases. The histogram indicates a slight right skew, but generally follows a normal distribution. There appears to be several points at the top of the scatterplot that could be potential outliers or influential points. They have the highest residual values.  
+
+### 5e. Based on this information, should you want to retain both variables as predictor variables of Y? Discuss why or why not.  
+I would retain all three variables in the model. Combined, they account for a much larger proportion of variance in the response variable than model 3. The adjusted R-squared increased at the same magnitude as the R-squared value indicating that the model was not penalized for an unimportant independent variable.  
+
+# Part C: Multiple Linear Regression Models on Transformed Response Variable  
+## Section 6:  
+Refit Model 1, Model 3 and Model 4 using the Natural Log of SALEPRICE as the response variable. This is LOG base e, or LN() on your calculator. You’ll have to find the appropriate function using R. Perform an analysis of goodness-of-fit to compare the Natural Log of SALEPRICE models to the original models. Which transformed model fits the best? Do the transformed models fit better than the original models? You do not need to report all of the output like was done in Parts A and  B. Rather, you should construct a table to summarize your findings so that the comparisons can be made easily. What is the best way or statistic to use, to make comparisons between models?    You may need more than one table to do this adequately, if you have more than 1 criteria.  
+
+```{r}
+# Model 1
+mod_1_log <- lm(model_df$logSalePrice ~ model_df$TotalSF)
+mod_1_log_summary <- summary(mod_1_log)
+anova_mod1_log <- anova(mod_1_log)
+mod_1_log_rmse <- sqrt(mean(mod_1_log$residuals ^ 2))
+
+# Model 3
+mod_3_log <-
+  lm(model_df$logSalePrice ~ model_df$TotalSF + model_df$OverallQual)
+mod_3_log_summary <- summary(mod_3_log)
+anova_mod3_log <- anova(mod_3_log)
+mod_3_log_rmse <- sqrt(mean(mod_3_log$residuals ^ 2))
+
+# Model 4
+mod_4_log <-
+  lm(
+    model_df$logSalePrice ~ model_df$TotalSF + model_df$OverallQual + model_df$TotalBsmtSF
+  )
+mod_4_log_summary <- summary(mod_4_log)
+anova_mod4_log <- anova(mod_4_log)
+mod_4_log_rmse <- sqrt(mean(mod_4_log$residuals ^ 2))
+
+# Summary Table
+summary_df <- tibble(
+  "Model" = c(1, 3, 4),
+  "Adjusted R-Squared" = c(
+    mod_1_log_summary$adj.r.squared,
+    mod_3_log_summary$adj.r.squared,
+    mod_4_log_summary$adj.r.squared
+  ),
+  "RMSE" = c(mod_1_log_rmse, mod_3_log_rmse, mod_4_log_rmse)
+)
+
+# Output
+knitr::kable(summary_df)
+```
+
+I decided to utilize the adjusted R-squared values alongside the RMSE for each model. The adjusted R-squared value is a good measure of the proportion of variance accounted for in the response variable. It utilizes a penalty factor so that unimportant independent variables don't increase the value. The measure RMSE is the square root of the mean squared error. Model 4 fits the data the best utilizing both of these measures.  
+
+## Section 7:  
+How is the interpretation of the LN(SalePrice) models different from the SalePrice models? Discuss if the improvement of model fit justifies the use of the Log(SALEPRRICE) response variable, relative  to interpretation and explanation to a non-technical audience, like your manager or other executives.  
+
+It becomes more difficult to explain the model coefficients once variables are transformed. In this particular case, there is only one transformation occurring, therefore I believe it's increased difficulty in terms of explainability is worth the increased model performance. The predicted Log(SalePrice) could be transformed back to SalePrice prior to presenting findings to the executive team. I've found that simpler is better in terms of explaining technical concepts to non-technical leaders. If the presentation of the model results were contextualized with the problem statement, then you have a much better chance of getting by in even if they don't understand the technical implementation.  
+
+# Part D: Multiple Linear Regression and Influential Points  
+
+```{r fig.width=10, fig.height=5}
+par(mfrow = c(2,2))
+plot(model_4)
+```
+
+# Part E: Beginning to Think About a Final Model 
+## Section 9:
+### 9a. Approach  
+I've decided to include some additional continuous variables in the final model. Up until this point, the variables have all been related to the interior of the house or the overall quality score (ordinal). I'm going to include some external measurements (i.e. GarageArea, LotArea, LotFrontage) to see how they impact the model. Many home buyers are concerned with the property size and it's exposure to the street.  
+
+### 9b. Model  
+
+```{r}
+model_5 <-
+  lm(
+    model_df$SalePrice ~ model_df$TotalSF + model_df$OverallQual + model_df$TotalBsmtSF + model_df$GarageArea + model_df$LotArea + model_df$LotFrontage
+  )
+summary(model_5)
+```
+
+GarageArea has a coefficient of 52.12 meaning that a 1 unit increase in GarageArea will result in an increase of \$52.12 in SalePrice if all other variables held constant (this will be assumed for remainder of coefficients to reduce redundancy). LotArea has a coefficient of 1.667 which equates to a \$1.67 increase in SalePrice for a one unit increase in LotArea. LotFrontage has a coefficient of 160.1015 which equates to a \$160.11 increase in SalePrice for a one unit increase in LotFrontage.  
+
+### 9c. ANOVA  
+
+**Omnibus Overall F-test**  
+
+The formula for calculating the F-statistic for overall model is:
+
+$$
+F=\frac{Mean\ Squared\ Regression}{Mean\ Squared\ Residual}=\frac{(\frac{(SSY-SSE)}{k})}{(\frac{SSE}{(n-k-1)})}
+$$
+
+The following is the ANOVA table from Model 4. The values will be used to calculate the overall F-statistic.
+
+```{r}
+anova(model_5)
+```
+
+The hypotheses are as follows:  
+
+$$
+Null=H_0:\beta_1=\beta_2=\beta_3=\beta_4=\beta_5=\beta_6=0
+$$
+
+$$
+Alternate=H_a:\beta_i\neq0\ for\ at\ least\ one\ i
+$$
+
+The F-statistic is calculated as follows:  
+
+```{r echo=TRUE}
+# Write ANOVA results to dataframe
+anova_5 <- anova(model_5)
+
+# Extract SSY & SSE
+SSY <- sum(anova_5$`Sum Sq`)
+SSE <- anova_5$`Sum Sq`[7]
+
+# Define k & n
+k <- 6
+n <- nrow(model_df)
+
+# Calculate numerator and denominator
+numerator_f <- (SSY - SSE) / k
+denominator_f <-  SSE / (n - k - 1)
+
+# Calculate F
+F <- round(numerator_f / denominator_f)
+
+# Output
+print(paste("The F-statistic =", F))
+```
+
+The critical F value is calculated with the following:  
+
+$$
+F_{k,\ n-k-1,\ 1-\alpha}=F_{6,\ 1829-6-1,\ 1-0.05}=2.1036
+$$
+
+The F-statistic of 1740 is much greater than the critical value of 2.1036 This allows us to reject the null hypothesis. This indicates that there is a significant relationship between the independent variables and the response variable. However, this does not indicate which variables are meaningful.  
+
+### 4d-e. Compute & Visualize Residuals  
+Discuss any deviations from normality or patterns in the residuals that indicate heteroscedasticity.  
+
+```{r fig.align="center"}
+# Calculate Residuals
+model_5_pred <- predict(model_5, model_df)
+model_5_resid <- model_df$SalePrice - model_5_pred
+mean_resid <- mean(model_5_resid)
+std_resid <- sd(model_5_resid)
+model_5_std_resid <- (model_5_resid - mean_resid) / std_resid
+
+# Histogram of Standardized Residuals
+hist(model_5_std_resid,
+     main = "Histogram of Model 5 Standardized Residuals",
+     xlab = "Model 5 Standardized Residuals",
+     col = "orange")
+```
+
+```{r fig.align="center"}
+# Scatterplot
+plot(
+  model_5_pred,
+  model_5_std_resid,
+  col = "orange",
+  main = "Standardized Residuals vs Predicted Y",
+  xlab = "Predicted Y Value",
+  ylab = "Standardized Residuals"
+)
+```
+
+The scatterplot indicates that the error variance increases as $\hat{Y}$ increases. This is a sign of heteroscedasticity. There also appears to be a downward trend initially in the residuals.
+
+# Conclusion / Reflection
+Variable transformation and outlier detection/removal can seemingly have a dramatic effect on the modeling process. If observations are obtained in a rigorous fashion and are determined to be valid data points, then it becomes a level of modeler's bias to remove them. The difficulty really comes from future observations that may contain the same attribute values as the influential or outlier points. This will lead to a poor prediction on these observations. I think that it can ultimately be a benefit to remove these values as their influence can dramatically change the prediction values for the vast majority of "normal" observations. I think that statistical tests can be trusted to a certain extent, but common sense needs to be employed when interpreting them. The intercept for example is largely meaningless in the context of this problem. Analyzing it's test of significance won't change that fact. I think that the next steps would include examining interactions between variables and checking for problems with collinearity. I noticed in the correlations matrix that some of the independent variables have strong linear correlations. These are things that would need to be explored and/or accounted for.

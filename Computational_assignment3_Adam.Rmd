@@ -1,0 +1,665 @@
+---
+title: "Computational Assignment 3"
+output: pdf_document
+author: Jason Adam
+date: July 28, 2019
+---
+
+# Objective  
+Use multiple regression to predict Cholesterol using models with categorical variables. For the duration of this analysis the response variable (Y) will be $Y=Cholesterol$ and the remaining variables will be considered explanatory variables (X's).
+
+```{r knitr_options, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r libraries}
+library(readr)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+n_df <- read_csv("NutritionStudy.csv")
+```
+
+```{r formulas_for_analysis}
+# Enhanced histogram function
+enhanced_hist <- function(x, title_alias) {
+  par(mfrow=c(1, 2))
+  skew <- round(moments::skewness(x), digits = 3)
+  kurtosis <- round(moments::kurtosis(x), digits = 3)
+  
+  #Histogram
+  hist(
+    x = x,
+    main = paste("Histogram of", title_alias),
+    xlab = title_alias,
+    col = "purple"
+  )
+  legend("topright",
+         legend = paste("kurtosis =", kurtosis, "&", "skew =", skew))
+  
+  # Boxplot
+  boxplot(
+    x = x,
+    main = paste("Boxplot of", title_alias),
+    xlab = title_alias,
+    col = "purple",
+    outcol = "red"
+    )
+}
+
+# Omnibus F-test calculation
+omnibus_f <- function(model, alpha = 0.95) {
+  # Calculate F-statistic
+  anova_obj <- anova(model)
+  ssy <- sum(anova_obj$`Sum Sq`)
+  sse_index <- length(anova_obj$`Sum Sq`)
+  sse <- anova_obj$`Sum Sq`[sse_index]
+  k <- sum(anova_obj$Df[-sse_index])
+  n <- sum(anova_obj$Df) + 1
+  num <- (ssy - sse) / k
+  denom <- sse / (n - k - 1)
+  f <- round(num / denom, digits = 4)
+  
+  # Calculate critical F Value
+  crit_f <- round(qf(alpha, k, (n - k - 1)), digits = 4)
+  
+  # Output: Determine if reject the null
+  if (f > crit_f) {
+    print(paste("F-statistic of", f, "is greater than the critical value of", crit_f))
+    print("We can REJECT the null hypothesis")
+  } else {
+    print(paste("F-statistic of", f, "is less than the critical value of", crit_f))
+    print("We FAIL TO REJECT the null hypothesis")
+  }
+}
+
+# Regression Diagnostics
+regression_diagnostics <-
+  function(model,
+           cooks_threshold = 1,
+           leverage_threshold = 2) {
+    # Cooks Distance
+    cooks_dist <- cooks.distance(model)
+    potential_outliers <- cooks_dist[cooks_dist > cooks_threshold]
+    if (length(potential_outliers) == 0) {
+      cooks_outliers <- 0
+    } else {
+      cooks_outliers <- potential_outliers
+    }
+    
+    # Leverage
+    hat_vals <- hatvalues(model)
+    k <- length(model$coefficients) - 1
+    n <- length(model$residuals)
+    hat_outliers <-
+      hat_vals[hat_vals > ((leverage_threshold * (k + 1)) / n)]
+    if (length(hat_outliers) == 0) {
+      hat_out <- 0
+    } else {
+      hat_out <- hat_outliers
+    }
+    return(list(
+      CooksDistanceOutliers = cooks_outliers,
+      LeverageOutliers = hat_out
+    ))
+  }
+```
+
+# Setting the Stage  
+Below are the formula definitions that will be used for various tests. I'm purposefully referencing them here as to avoid redundantly typing them throughout the analysis.  
+
+**Omnibus Overall F-test**  
+
+The formula for calculating the F-statistic for overall model is:
+
+$$
+F=\frac{Mean\ Squared\ Regression}{Mean\ Squared\ Residual}=\frac{(\frac{(SSY-SSE)}{k})}{(\frac{SSE}{(n-k-1)})}
+$$
+
+The formula for calculating the critical F-statistic is:
+
+$$
+F_{k,\ n-k-1,\ 1-\alpha}
+$$
+
+# Brief EDA  
+## Response Variable  
+Below we can see the response variable of **Cholesterol**.  
+
+```{r fig.width=10, fig.height=5, fig.align="center"}
+enhanced_hist(n_df$Cholesterol, title_alias = "Cholesterol")
+```
+
+
+# 1. Recode Categorical Variables  
+For all of the categorical variables in the dataset, recode the text based categories into numerical values that indicate group. For example, for the VITAMIN variable, you could code it so that: 1=regular, 2=occasional, 3=never. Save the categorical variables to the dataset.
+
+```{r echo=TRUE}
+# Recode the categorical variables
+n_df <- n_df %>%
+  mutate(
+    SmokeRecode = case_when(Smoke == "Yes" ~ 1,
+                            TRUE ~ 2),
+    GenderRecode = case_when(Gender == "Male" ~ 1,
+                             TRUE ~ 2),
+    VitaminUseRecode = case_when(VitaminUse == "Regular" ~ 1,
+                                 VitaminUse == "Occasional" ~ 2,
+                                 TRUE ~ 3)
+  )
+```
+
+# 2. Simple Linear Model  
+For the VITAMIN categorical variable, fit a simple linear model that uses the categorical variable to predict the response variable Y=CHOLESTEROL. Report the model, interpret the coefficients, discuss hypothesis test results, goodness of fit statistics, diagnostic graphs, and leverage, influence and Outlier statistics. Recode the VITAMIN categorical variable so that you have a different set of indicator values. For example, you could code it so that: 1=never, 2=occasional, 3=regular. Re-fit an OLS simple linear model using the new categorization. Report the model, interpret the coefficients, discuss test results, etc.  What is going on here?
+
+## Model 1  
+### Summary  
+Below is the model summary.
+
+```{r}
+mod_1 <- lm(Cholesterol ~ VitaminUse, data = n_df)
+summary(mod_1)
+```
+
+We can see from the model summary that the intercept term is the only coefficient with which we can reject the null hypothesis at an alpha value of 0.05. In this particular model, the intercept represents those who "never" use vitamins. This means that the baseline cholesterol for someone with no vitamin use is 246.599. The regression coefficients for the other two vitamin use categories can be interpreted as subtracting cholesterol from the baseline value. If a person is a user of vitamins then they're cholesterol decreases. However, neither regression coefficient for the two usage categories is able to reject the null hypothesis. This can be seen further by examining their confidence intervals (both include 0). Additionally, R-squared value of the model is nearly 0 which indicates that our dependent variable is accounting for virtually none of the variance in Cholesterol.
+
+```{r}
+confint(mod_1)
+```
+
+### Omnibus F-Test
+
+```{r}
+omnibus_f(mod_1)
+```
+
+### Output Graphs
+
+```{r, fig.width=10, fig.height=10, fig.align="center"}
+par(mfrow=c(2,2))
+plot(mod_1)
+```
+
+It appears that there are several potential outlier values based on their extremely large variance in the Residuals vs Fitted graph (top left). The residuals also follow a strict pattern since we only have 3 values for the categorical variable.
+
+### Regression Diagnostics  
+Below we can see our results from cooks distance and leverage calculations. For reference, we will investigate values with cooks distance greater than 1 and leverage values greater than:  
+
+$$
+\frac{2*(k+1)}{n}
+$$
+
+```{r}
+regression_diagnostics(mod_1)
+```
+
+We can see that there are no values meeting either threshold for these diagnostic measures.
+
+## Model 2  
+### Summary  
+Below is the model summary.
+
+```{r}
+mod_2 <- lm(Cholesterol ~ VitaminUseRecode, data = n_df)
+summary(mod_2)
+```
+
+The Vitamin variable is now being treated as a numeric variable in the model. The coefficient can be interpreted as a 1 unit increase in vitamin use will increase Cholesterol by 5.001 units. However, this coefficient is not statistically significant as seen by it's p-value (0.564). It's confidence interval can be seen below which includes zero. The R-squared value is once again nearly zero which tells us that the VitaminUseRecode variable accounts for virtually no variance in Cholesterol.
+
+```{r}
+confint(mod_2)
+```
+
+### Omnibus F-Test
+
+```{r}
+omnibus_f(mod_2)
+```
+
+### Output Graphs
+
+```{r, fig.width=10, fig.height=10, fig.align="center"}
+par(mfrow=c(2,2))
+plot(mod_2)
+```
+
+We can see once again that our residual graph shows 3 extreme values indicating that we potential outliers in our dataset. This was also observed in the histogram of cholesterol as it showed a significant right skew. The regression coefficients have flipped in the second model and there is now only one. Despite the recoding, the variable VitaminUse doesn't appear to explain any of the variance in Cholesterol.  
+
+### Regression Diagnostics  
+Below we can see our results from cooks distance and leverage calculations. For reference, we will investigate values with cooks distance greater than 1 and leverage values greater than:  
+
+$$
+\frac{2*(k+1)}{n}
+$$
+
+```{r}
+regression_diagnostics(mod_2)
+```
+
+We can see that there are no values meeting either threshold for these diagnostic measures.
+
+# 3. Dummy Coded Variables  
+Create a set of dummy coded (0/1) variables for the VITAMIN categorical variable. Fit a multiple regression model using the dummy coded variables to predict CHOLESTEROL (Y). Remember, you need to leave one of the dummy coded variables out of the equation. That category becomes the “basis of interpretation.” Report the model, interpret the coefficients, discuss hypothesis test results, goodness of fit statistics, diagnostic graphs, and leverage, influence and Outlier statistics. Compare the findings here to those in task 2). What has changed?  
+
+```{r echo=TRUE}
+# Add Dummy-Coded Variables
+n_df$VitaminDummy_No <- ifelse(n_df$VitaminUse == "No", 1, 0)
+n_df$VitaminDummy_Occ <- ifelse(n_df$VitaminUse == "Occasional", 1, 0)
+n_df$VitaminDummy_Reg <- ifelse(n_df$VitaminUse == "Regular", 1, 0)
+```
+
+## Model 3  
+### Summary  
+Below we can see the model summary.  
+
+```{r}
+mod_3 <- lm(Cholesterol ~ VitaminDummy_Occ + VitaminDummy_Reg, data = n_df)
+summary(mod_3)
+```
+
+We can see from the model summary that we obtained the exact same model as model 1. This is not surprising as R coerces character columns to factors which essentially dummy codes them under the hood. By leaving out the dummy coded variable of *VitamineUse == "No"* we can interpret the coefficients as the following. The intercept ($\beta_0$) can be see as the average cholesterol of someone who does not take vitamins. The first regression coefficient ($\beta_1$) is the difference in cholesterol between those that don't use vitamins and those that use them occasionally. $\beta_0+\beta_1$ equals the average cholesterol for someone with occasional vitamin use. $\beta_2$ represents the difference in cholesterol between those that use vitamins regularly and those that don't use them. $\beta_0+\beta_2$ is equal to the average cholesterol for someone who uses vitamins regularly.  
+
+As seen in model 1, the coefficients don't hold any statistical significance, and we are unable to reject the null hypothesis that they are 0 due to their p-values. The R-squared value is nearly zero as well, indicating that these dummy coded variables don't account for any variance in cholesterol.
+
+### Omnibus F-Test
+
+```{r}
+omnibus_f(mod_3)
+```
+
+### Output Graphs
+
+```{r, fig.width=10, fig.height=10, fig.align="center"}
+par(mfrow=c(2,2))
+plot(mod_3)
+```
+
+Nothing appears to have changed with this model and model 1. All of the coefficients are exactly the same.  
+
+### Regression Diagnostics  
+Below we can see our results from cooks distance and leverage calculations. For reference, we will investigate values with cooks distance greater than 1 and leverage values greater than:  
+
+$$
+\frac{2*(k+1)}{n}
+$$
+
+```{r}
+regression_diagnostics(mod_3)
+```
+
+We can see that there are no values meeting either threshold for these diagnostic measures.
+
+
+# 4. Effect Coding  
+For the VITAMIN categorical variable, use the NEVER categorical as the control or comparative group, and develop a set of indicator variables using effect coding. Save these to the dataset. Fit a multiple regression model using the dummy coded variables to predict CHOLESTEROL(Y).  Report the model, interpret the coefficients, discuss hypothesis test results, goodness of fit statistics, diagnostic graphs, and leverage, influence and Outlier statistics. Compare the findings here to those in task 3). What has changed? Which do you prefer?  Why?  
+
+```{r echo=TRUE}
+# Add Effect Coding with "No" as control/comparative
+n_df <- n_df %>%
+  mutate(
+    VitRegEc = case_when(VitaminUse == "Regular" ~ 1,
+                         VitaminUse == "No" ~ -1,
+                         TRUE ~ 0),
+    VitOccEc = case_when(VitaminUse == "Occasional" ~ 1,
+                         VitaminUse == "No" ~ -1,
+                         TRUE ~ 0)
+  )
+```
+
+## Model 4  
+### Summary  
+Below we can see the model summary.
+
+```{r}
+mod_4 <- lm(Cholesterol ~ VitRegEc + VitOccEc, data = n_df)
+summary(mod_4)
+```
+
+We can see that the F-statistic and R-squared values are exactly the same as models 1 and 3. The coefficients have changed slightly, but we are still only accounting for an extremely small amount of variation in cholesterol. The sign for the regular usage coefficient has become negative indicating that the average cholesterol for those that consume vitamins regularly is less than those that don't. Additionally, the occasional vitamin user has a higher average cholesterol than a person who doesn't consume vitamins. Despite these interpretations the coefficients are not statistically significant and we can't reject the null hypothesis that they're equal to zero. They're confidence intervals can be seen below (they include zero).  
+
+```{r}
+confint(mod_4)
+```
+
+### Omnibus F-Test
+
+```{r}
+omnibus_f(mod_4)
+```
+
+### Output Graphs
+
+```{r, fig.width=10, fig.height=10, fig.align="center"}
+par(mfrow=c(2,2))
+plot(mod_4)
+```
+
+The only noticeable thing that has changed is the interpretation of the coefficients. However, the coefficient interpretation can/will be different if a different value is held out as the baseline. I tend to prefer the dummy-coded variables (or one-hot-encoded) as I normally describe them). It's easier for me to remember a 1 or 0 combination for each value of categorical variable.  
+
+### Regression Diagnostics  
+Below we can see our results from cooks distance and leverage calculations. For reference, we will investigate values with cooks distance greater than 1 and leverage values greater than:  
+
+$$
+\frac{2*(k+1)}{n}
+$$
+
+```{r}
+regression_diagnostics(mod_4)
+```
+
+We can see that there are no values meeting either threshold for these diagnostic measures.
+
+# 5. Alcohol Variable  
+Discretize the ALCOHOL variable to form a new categorical variable with 3 levels.  
+
+```{r echo=TRUE}
+# Discretize Alcohol Variable
+n_df <- n_df %>%
+  mutate(AlcoholDisc = case_when(Alcohol == 0 ~ 1,
+                                 Alcohol < 10 ~ 2,
+                                 Alcohol >= 10 ~ 3))
+
+# Effect Encode
+n_df <- n_df %>%
+  mutate(
+    AlcoholNone_ef = case_when(AlcoholDisc == 1 ~ 1,
+                               AlcoholDisc == 3 ~ -1,
+                               TRUE ~ 0),
+    AlcoholOccasional_ef = case_when(AlcoholDisc == 2 ~ 1,
+                                     AlcoholDisc == 3 ~ -1,
+                                     TRUE ~ 0)
+  )
+```
+
+# 6. Interactions  
+At this point, you should have effect coded indicator variables for VITAMIN and 2 effect coded indicator variables for ALCOHOL. Create 4 product variables by multiplying each of the effect coded indicator variables for VITAMIN by the effect coded indicator variables for ALCOHOL. This is all pairwise products of the effect coded variables. Now, we are going to test for interaction. Fit an OLS multiple regression model using the 4 VITAMIN and ALCOHOL effect coded indicator variables plus the 4 product variables to predict CHOLESTEROL. Call this the full model.  For the Reduced model, fit an OLS multiple regression model using only the effect coded variables for VITAMIN and ALCOHOL to predict CHOLESTEROL. Conduct a nested model F-test using the Full and Reduced Models described here. Be sure to state the null and alternative hypothesis, make a decision regarding the test, and interpret the result.  Obtain a means plot to illustrate any interaction, or lack thereof, to help explain the result.  
+
+Below is the calculation for the interaction variables.
+
+```{r echo=TRUE}
+# Add Interaction Variables
+n_df <-  n_df %>%
+  mutate(
+    VitReg_AlcNone = VitRegEc * AlcoholNone_ef,
+    VitReg_AlcOcc = VitRegEc * AlcoholOccasional_ef,
+    VitOcc_AlcNone = VitOccEc * AlcoholNone_ef,
+    VitOcc_AlcOcc = VitOccEc * AlcoholOccasional_ef
+  )
+```
+
+## Full Model  
+Below is the summary of our full model with the interaction terms.
+
+```{r}
+full_model <-
+  lm(
+    Cholesterol ~ VitRegEc + VitOccEc + AlcoholNone_ef + AlcoholOccasional_ef + VitReg_AlcNone + VitReg_AlcOcc + VitOcc_AlcNone + VitOcc_AlcOcc,
+    data = n_df
+  )
+
+summary(full_model)
+```
+
+## Reduced Model  
+Below is the summary output of the reduced model.
+
+```{r}
+reduced_model <-
+  lm(Cholesterol ~ VitRegEc + VitOccEc + AlcoholNone_ef + AlcoholOccasional_ef,
+     data = n_df)
+summary(reduced_model)
+```
+
+### Partial F-Test
+
+A partial F-test is to be used with nested models. The goal is to test whether the addition of the interaction variables (as a set) significantly improved the prediction of Y given that the effect encoded Vitamin and Alcohol variables were already in the model.  
+
+The equation for the partial F-test is as follows:  
+
+$$
+F(X^{*}_1,X^{*}_2,X^{*}_3,X^{*}_4\ |\ X_1,X_2,X_3,X_4)=\frac{(\frac{SS(X^{*}_1,X^{*}_2,X^{*}_3,X^{*}_4\ |\ X_1,X_2,X_3,X_4)}{s})}{MS\ Residual\ (X^{*}_1,X^{*}_2,X^{*}_3,X^{*}_4,X_1,X_2,X_3,X_4)}
+$$
+
+Variables denoted as $X^*$ represent the four additional interaction variables added to the model. The value $s$ represents the number of added independent variables.  
+
+The hypotheses can be stated as follows:  
+
+$$
+Null=H_0:\beta^{*}_1=\beta^{*}_2=\beta^{*}_3=\beta^{*}_4=0\ in\ the\ full\ model
+$$
+
+$$
+Alternate=H_a:\beta^{*}_i\neq0\ for\ at\ least\ 1\ i\ in\ the\ model
+$$
+
+The equation to calculate the F-statistic can be rewritten in order to easily use values from the model anova tables.  
+
+$$
+F(X^{*}_1,X^{*}_2,X^{*}_3,X^{*}_4\ |\ X_1,X_2,X_3,X_4)=\frac{(\frac{(Regression\ SS(full)-Regression\ SS(reduced))}{s})}{MS\ Residual(full)}
+$$
+
+If we input the values from the model anova tables we get the following. I've chose to perform the calculations in R due to LaTex limitations.  
+
+```{r echo=TRUE}
+# Save Anova objects
+full_anova <- anova(full_model)
+reduced_anova <- anova(reduced_model)
+
+# Get Regression Sum Sq. from both Models
+full_regression_ss <-
+  sum(full_anova$`Sum Sq`[1:(length(full_anova$`Sum Sq`) - 1)])
+reduced_regression_ss <-
+  sum(reduced_anova$`Sum Sq`[1:(length(reduced_anova$`Sum Sq`) - 1)])
+
+# Set s value: i.e. the number of additional independent variables
+s <- 4
+df <- nrow(n_df) - 8 - 1
+
+# Get MS Residual (full)
+full_ms_residual <- full_anova$`Sum Sq`[length(full_anova$`Sum Sq`)] / df
+
+# Numerator & Denominator
+numerator_nest <- (full_regression_ss - reduced_regression_ss) / s
+denominator_nest <- full_ms_residual
+
+# Compute F
+F_nest <- round(numerator_nest / denominator_nest, digits = 4)
+
+# Output
+print(paste("The F-statistic =", F_nest))
+```
+
+The critical F value can be computed as follows:  
+
+$$
+F_{s,\ n-q-s-1,\ 1-\alpha}=F_{4,\ 315-4-4-1,\ 1-0.05}=2.4012
+$$
+
+The F-statistic of 1.204 is well below our critical value of 2.4012 which indicates we can not reject the null hypothesis. This means that the interaction variables do not add any significant information for predicting cholesterol.
+
+
+```{r}
+interaction.plot(
+  n_df$VitaminUse,
+  factor(n_df$AlcoholDisc),
+  response = n_df$Cholesterol,
+  main = "Interaction Plot between Vitamin Use & Alcohol Use",
+  xlab = "Vitamin Use",
+  ylab = "Mean of Cholesterol",
+  trace.label = "Alcohol Usage"
+)
+```
+
+We can see from the interaction plot that there are interactions occurring between the variables. Despite this interaction effect, the impact on cholesterol does not achieve a level of statistical significance. Additionally, the partial F-test concluded that the interaction terms did not add any further information in predicting cholesterol than the reduced model.  
+
+# 7. Additional Categorical Variables  
+There are 2 other categorical variables in this dataset, namely GENDER and SMOKE.  Do these variables interact amongst themselves or with VITAMIN or ALCOHOL when it comes to modeling CHOLESTEROL? Obtain means plots to see if there is interaction. Conduct nested model F-tests to rule out randomness as the explanation for observed patterns. Report your findings.  
+
+## Interaction Plots  
+
+```{r fig.width=10, fig.height=10}
+par(mfrow = c(3,2))
+
+# Gender * Smoke
+interaction.plot(
+  n_df$Gender,
+  n_df$Smoke,
+  response = n_df$Cholesterol,
+  main = "Gender * Smoke",
+  xlab = "Gender",
+  ylab = "Mean of Cholesterol",
+  trace.label = "Smoke"
+)
+
+# Gender * Vitamin
+interaction.plot(
+  n_df$Gender,
+  n_df$VitaminUse,
+  response = n_df$Cholesterol,
+  main = "Gender * Vitamin Use",
+  xlab = "Gender",
+  ylab = "Mean of Cholesterol",
+  trace.label = "Vitamin Use"
+)
+
+# Gender * Alcohol
+interaction.plot(
+  n_df$Gender,
+  factor(n_df$AlcoholDisc),
+  response = n_df$Cholesterol,
+  main = "Gender * Alcohol Use",
+  xlab = "Gender",
+  ylab = "Mean of Cholesterol",
+  trace.label = "Alcohol"
+)
+
+# Smoke * Vitamins
+interaction.plot(
+  n_df$Smoke,
+  n_df$VitaminUse,
+  response = n_df$Cholesterol,
+  main = "Smoke * Vitamin Use",
+  xlab = "Smoke",
+  ylab = "Mean of Cholesterol",
+  trace.label = "Vitamin Use"
+)
+
+# Smoke * Alcohol
+interaction.plot(
+  n_df$Smoke,
+  factor(n_df$AlcoholDisc),
+  response = n_df$Cholesterol,
+  main = "Smoke * Alcohol",
+  xlab = "Smoke",
+  ylab = "Mean of Cholesterol",
+  trace.label = "Alcohol"
+)
+```
+
+## Partial F-Tests  
+
+```{r}
+# Function to Perform Partial F-Tests
+partial_f_test <- function(full_mod, partial_mod, alpha = 0.05) {
+  # Add ANOVA objects
+  full_anova <- anova(full_mod)
+  partial_anova <- anova(partial_mod)
+  
+  # Calculate sum of squares
+  full_regression_ss <-
+    sum(full_anova$`Sum Sq`[1:(length(full_anova$`Sum Sq`) - 1)])
+  reduced_regression_ss <-
+    sum(partial_anova$`Sum Sq`[1:(length(partial_anova$`Sum Sq`) - 1)])
+  
+  s <- sum(partial_anova$Df[1:(length(partial_anova$Df) - 1)])
+  df <- full_anova$Df[length(full_anova$Df)]
+  
+  # F-statistic computations
+  full_ms_residual <-
+    full_anova$`Sum Sq`[length(full_anova$`Sum Sq`)] / df
+  numerator <- (full_regression_ss - reduced_regression_ss) / s
+  denominator <- full_ms_residual
+  partial_f <- round(numerator / denominator, digits = 4)
+  
+  # Critical F
+  n <- sum(full_anova$Df) + 1
+  q_p <- sum(full_anova$Df[1:length(full_anova$Df) - 1])
+  df2 <- n - q_p - 1
+  critical_f <- round(qf(1 - alpha, s, df2), digits = 4)
+  
+  # Print based on reject or fail to reject
+  if (partial_f > critical_f) {
+    print(
+      paste(
+        "The F-statistic is",
+        partial_f,
+        "which is greater than the critical value of",
+        critical_f
+      )
+    )
+    print("Therefore we can REJECT the null hypothesis")
+  } else {
+    print(
+      paste(
+        "The F-statistic is",
+        partial_f,
+        "which is less than the critical value of",
+        critical_f
+      )
+    )
+    print("Therefore we FAIL TO REJECT the null hypothesis")
+  }
+}
+```
+
+### Gender \* Smoke  
+
+```{r}
+gs_full <- lm(Cholesterol ~ Gender * Smoke, data = n_df)
+gs_reduced <- lm(Cholesterol ~ Gender + Smoke, data = n_df)
+
+partial_f_test(full_mod = gs_full, partial_mod = gs_reduced)
+```
+
+### Gender \* Vitamin Use  
+
+```{r}
+gv_full <- lm(Cholesterol ~ Gender * VitaminUse, data = n_df)
+gv_reduced <- lm(Cholesterol ~ Gender + VitaminUse, data = n_df)
+
+partial_f_test(full_mod = gv_full, partial_mod = gv_reduced)
+```
+
+### Gender \* Alcohol  
+
+```{r}
+ga_full <- lm(Cholesterol ~ Gender * factor(AlcoholDisc), data = n_df)
+ga_reduced <- lm(Cholesterol ~ Gender + factor(AlcoholDisc), data = n_df)
+
+partial_f_test(full_mod = ga_full, partial_mod = ga_reduced)
+```
+
+### Smoke \* Vitamin Use
+
+```{r}
+sv_full <- lm(Cholesterol ~ Smoke * VitaminUse, data = n_df)
+sv_reduced <- lm(Cholesterol ~ Smoke + VitaminUse, data = n_df)
+
+partial_f_test(full_mod = sv_full, partial_mod = sv_reduced)
+```
+
+### Smoke \* Alcohol  
+
+```{r}
+sa_full <- lm(Cholesterol ~ Smoke * factor(AlcoholDisc), data = n_df)
+sa_reduced <- lm(Cholesterol ~ Smoke + factor(AlcoholDisc), data = n_df)
+
+partial_f_test(full_mod = sa_full, partial_mod = sa_reduced)
+```
+
+ If we look at the graphs, there appears to be interactions among all combinations of variables, but the partial F-tests show us that there is no significant value added in predicting cholesterol by any of these interaction terms.
+ 
+# Conclusion / Reflection  
+Overall, I really enjoyed this assignment. The concepts really feel like they're coming together. There are so many tools and methods available for building and rigorously testing your models. I really like the methodical approach of checking assumptions, testing the model (coefficients and overall), investigating interactions, testing their impact, etc. I decided to write a custom function that would intake a full model object and a reduced model object and return the partial F-statistic as well as whether or not it was above or below the critical F value. I was unable to get lessR or car installed due to an obscure compiler error, but this turned out to be a blessing in disguise as I had to write my own custom functions that wrapped around base R built in functions to calculate the different model diagnostics. This was a great learning experience.

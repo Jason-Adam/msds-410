@@ -1,0 +1,879 @@
+---
+title: "Modeling Assignment 3"
+output: pdf_document
+author: Jason Adam
+date: August 11, 2019
+---
+
+# Purpose  
+In this modeling assignment we will finish building linear regression models to predict the home sale price. As such the response variable is:  SALEPRICE (Y).   We will begin by fitting specific models and looking at diagnostic and model fit information.  Models will progressively become more involved and complex over the span of this assignment.
+
+The data for this assignment is the Ames Housing dataset. The explanatory variables considered are all continuous and categorical variables in the dataset.
+
+```{r echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(readr)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(purrr)
+library(MASS)
+```
+
+```{r}
+# Load the dataset
+ames_df <- read.csv("ames_housing_data.csv", stringsAsFactors = TRUE)
+
+# Create some additional columns
+ames_df <- ames_df %>%
+  mutate(
+    TotalSqftCalc = BsmtFinSF1 + BsmtFinSF2 + GrLivArea,
+    logSalePrice = log(SalePrice),
+    PriceSqft = SalePrice / TotalSqftCalc,
+    QualityIndex = OverallQual * OverallCond,
+    BsmtFinishRatio = (BsmtFinSF1 + BsmtFinSF2) / TotalBsmtSF
+  )
+```
+
+# Sample Definition  
+There are several sub-populations of property transactions present in the dataset. The objective of this particular analysis is to provide estimates of home values for ‘typical’ homes in Ames, Iowa, therefore a sub-sample of the original dataset was created. Non-residential zones were removed to ensure the data only contained residential areas. Additionally, multi-family homes were excluded along with non-normal sale conditions. The documentation associated with the dataset recommended removing properties greater than a certain threshold for above ground livable area (Square Feet) as they do not represent the population that is the focus of this analysis. The resultant sample for the analysis consists of 1,987 observations.  
+
+```{r}
+# Subset the data; drop-out waterfall and 20 variables for EDA
+mdf <- ames_df %>%
+  filter(
+    Zoning %in% c("RH", "RL", "RP", "RM", "FV"),
+    BldgType == "1Fam",
+    SaleCondition == "Normal",
+    GrLivArea < 4000
+  )
+```
+
+# 1. Preparing the Categorical Variables  
+On first principles (i.e. your reasoning) which seem most likely to be related to, or predictive of, SALESPRICE?  For those categorical variables that seem most reasonable or interesting, find summary statistics for Y (i.e. means, medians, std dev., etc) BY the levels of the categorical variable.  Which categorical variable(s) have the greatest mean difference between levels?  Why is this an important quality to look for?  Create dummy coded (or effect coded, if you prefer) variables for the interesting categorical variables that may be predictive of SALEPRICE.  
+
+Below we can see all the categorical variables in the dataset.
+
+```{r echo=TRUE}
+mdf %>%
+  select_if(is.factor) %>%
+  names()
+```
+
+At first glance, the categorical variables that seem most interesting are **Neighborhood** and **Condition1**. Intuitively these are things that I look at when examining a property. Condition1 pertains to the proximity of the property to various city conditions described below.  
+
+```{r}
+knitr::kable(data.frame(
+  Condition1 = unique(mdf$Condition1),
+  Definition = c(
+    "Normal",
+    "Adjacent to feeder street",
+    "Near positive off-site feature--park, greenbelt, etc.",
+    "Within 200' of East-West Railroad",
+    "Adjacent to East-West Railroad",
+    "Adjacent to arterial street",
+    "Adjacent to positive off-site feature",
+    "Adjacent to North-South Railroad",
+    "Within 200' of North-South Railroad"
+  )
+))
+```
+
+Below we can see summary statistics for the Neighborhood variable.
+
+```{r}
+nbrhd_mean <-
+  aggregate(SalePrice ~ Neighborhood, data = mdf, FUN = mean)
+
+nbrhd_median <-
+  aggregate(SalePrice ~ Neighborhood, data = mdf, FUN = median)
+
+nbrhd_sd <-
+  aggregate(SalePrice ~ Neighborhood, data = mdf, FUN = sd)
+
+nbrhd_summary_df <- bind_cols(nbrhd_mean, nbrhd_median, nbrhd_sd)
+
+nbrhd_summary_df <- nbrhd_summary_df %>%
+  mutate(MeanSP = SalePrice,
+         MedSP = SalePrice1,
+         SdSP = SalePrice2) %>%
+  dplyr::select(Neighborhood, MeanSP, MedSP, SdSP)
+
+knitr::kable(nbrhd_summary_df)
+```
+
+If we look at the summary of the regression model SalePrice ~ Neighborhood, we can review the coefficients as the mean difference from *Blmngtn*. There are several neighborhoods with very big mean differences. The adjusted R-squared also shows us that Neighborhood accounts for a high amount of variance in SalePrice.
+
+```{r}
+summary(lm(SalePrice ~ Neighborhood, data = mdf))
+```
+
+```{r}
+# Add dummy coded variables for neighborhood
+dummy_nbrhd <- model.matrix(~ Neighborhood - 1, data = mdf)
+dummy_nbrhd <- data.frame(dummy_nbrhd)
+mdf <- bind_cols(mdf, dummy_nbrhd)
+```
+
+Below is the summary table for Condition1. We can see a wide range of mean SalePrice amongst the conditions.
+
+```{r}
+con_mean <-
+  aggregate(SalePrice ~ Condition1, data = mdf, FUN = mean)
+
+con_median <-
+  aggregate(SalePrice ~ Condition1, data = mdf, FUN = median)
+
+con_sd <-
+  aggregate(SalePrice ~ Condition1, data = mdf, FUN = sd)
+
+con_summary_df <- bind_cols(con_mean, con_median, con_sd)
+
+con_summary_df <- con_summary_df %>%
+  mutate(MeanSP = SalePrice,
+         MedSP = SalePrice1,
+         SdSP = SalePrice2) %>%
+  dplyr::select(Condition1, MeanSP, MedSP, SdSP)
+
+knitr::kable(con_summary_df)
+```
+
+The regression summary confirms our statement above that there are big differences in the means amongst the levels of Condition1. However, the adjusted R-squared is near zero which indicates that the Condition1 variable doesn't account for any variance in SalePrice. This variable will not be used in further analysis.
+
+```{r}
+summary(lm(SalePrice ~ Condition1, data = mdf))
+```
+
+# 2. The Predictive Modeling Framework  
+A defining feature of predictive modeling is assessing model performance out-of-sample. We will use uniform random number to split the sample into a 70/30 train/test split. With a train/test split we now have two data sets: one for in-sample model development and one for out-of-sample model assessment.
+
+```{r}
+# Set seed
+set.seed(123)
+
+# Random number between 0 & 1
+mdf$rand <- runif(n = dim(mdf)[1],
+                  min = 0,
+                  max = 1)
+
+# Create the splits
+train_df <- subset(mdf, rand < 0.7)
+test_df <- subset(mdf, rand >= 0.7)
+
+# Summary of observations
+knitr::kable(data.frame(
+  "DataFrame" = c("train_df", "test_df"),
+  "ObsCounts" = c(nrow(train_df), nrow(test_df)),
+  "PercentOfObs" = c(nrow(train_df) / nrow(mdf), nrow(test_df) / nrow(mdf))
+))
+```
+
+# 3. Model Identification by Automated Variable Selection  
+Create a pool of candidate predictor variables. This pool of candidate predictor variables needs to have at least 15-20 predictor variables, you can have more. The variables should be a mix of discrete and continuous variables. You can include dummy coded or effect coded variables, but not the original categorical variables.  Include a well-designed list or table of your pool of candidate predictor variables in your report.
+
+Below is the list of variables that will be included in the pool of candidate predictors.
+
+```{r}
+# Create clean training set
+train_clean_df <- train_df %>%
+  dplyr::select(
+    SalePrice,
+    YrSold,
+    TotalSqftCalc,
+    LotFrontage,
+    LotArea,
+    QualityIndex,
+    TotalBsmtSF,
+    FullBath,
+    MasVnrArea,
+    YearRemodel,
+    BedroomAbvGr,
+    GarageCars,
+    BsmtFinishRatio,
+    WoodDeckSF,
+    GarageArea,
+    PoolArea,
+    TotRmsAbvGrd
+  ) 
+
+train_names <- names(train_clean_df)
+knitr::kable(tibble(TrainDfVariables = train_names))
+```
+
+At this point I realized that there were roughly 300 unique observations in my training data that had missing values for one of the variables. Since this constituted greater than 20% of my training data, I decided to impute the values with their respective median values.  
+
+```{r}
+train_clean_df %>% 
+  dplyr::select(LotFrontage, MasVnrArea, BsmtFinishRatio) %>%
+  is.na() %>% 
+  summary()
+```
+
+```{r}
+train_clean_df <- train_clean_df %>%
+  mutate(
+    LotFrontage = replace_na(LotFrontage, median(train_clean_df$LotFrontage, na.rm = TRUE)),
+    MasVnrArea = replace_na(MasVnrArea, median(train_clean_df$MasVnrArea, na.rm = TRUE)),
+    BsmtFinishRatio = replace_na(
+      BsmtFinishRatio,
+      median(train_clean_df$BsmtFinishRatio, na.rm = TRUE)
+    )
+  )
+```
+
+## Model Identification  
+Using the training data find the 'best' models using automated variable selection using the techniques: forward, backward, and stepwise variable selection using the R function stepAIC() from the MASS library. Identify (list) each of these three models individually. Name them forward.lm, backward.lm, and stepwise.lm.  
+
+```{r}
+# Define the upper model as the FULL model
+upper_lm <- lm(SalePrice ~ ., data = train_clean_df)
+
+# Define the lower model as the Intercept model
+lower_lm <- lm(SalePrice ~ 1, data = train_clean_df)
+
+# Need a SLR to initialize stepwise selection
+sqft_lm <- lm(SalePrice ~ TotalSqftCalc, data = train_clean_df)
+```
+
+### Forward lm  
+Final model shown below.
+
+```{r include=FALSE}
+# Call stepAIC() for variable selection
+forward_lm <-
+  stepAIC(
+    object = lower_lm,
+    scope = list(upper = formula(upper_lm), lower =  ~ 1),
+    direction = c('forward')
+  )
+
+forw_summ <- summary(forward_lm)
+```
+
+```{r}
+forw_summ
+```
+
+**VIF Values Forward lm**
+
+```{r}
+forward_vif <- HH::vif(forward_lm)
+knitr::kable(data.frame(forward_vif))
+```
+
+### Backward lm  
+Final model shown below.  
+
+```{r include=FALSE}
+backward_lm <- stepAIC(object = upper_lm, direction = c('backward'))
+back_summ <- summary(backward_lm)
+```
+
+```{r}
+back_summ
+```
+
+**VIF Values Backwards lm**
+
+```{r}
+back_vif <- HH::vif(backward_lm)
+knitr::kable(data.frame(back_vif))
+```
+
+### Stepwise lm
+Final model shown below.  
+
+```{r include=FALSE}
+stepwise_lm <-
+  stepAIC(
+    object = sqft_lm,
+    scope = list(upper = formula(upper_lm), lower =  ~ 1),
+    direction = c('both')
+  )
+
+step_sum <- summary(stepwise_lm)
+```
+
+```{r}
+step_sum
+```
+
+
+**VIF Values Stepwise lm**
+
+Below are the VIF values for the stepwise model. There are no values over 10, however there are a couple variables between 5 and 8 which could indicate some collinearity.
+
+```{r}
+stepwise_vif <- HH::vif(stepwise_lm)
+knitr::kable(data.frame(stepwise_vif))
+```
+
+### Junk lm  
+This model is referred to as junk because the independent variables will be highly correlated due to the fact that QualityIndex is made up of the other two Quality variables. There will be a high level of collinearity between the three Quality variables.
+
+```{r}
+junk_lm <-
+  lm(SalePrice ~ OverallQual + OverallCond + QualityIndex + GrLivArea + TotalSqftCalc,
+     data = train_df)
+
+junk_summ <- summary(junk_lm)
+junk_summ
+```
+
+We can see from the VIF values that there is high collinearity between the quality variables.
+
+```{r}
+junk_vif <- HH::vif(junk_lm)
+knitr::kable(data.frame(junk_vif))
+```
+
+The three methods all selected the same model.
+
+## Model Comparison  
+Now that we have our final models, we need to compare the in-sample fit and predictive accuracy of our models. For each of these four models compute the adjusted R-Squared, AIC, BIC, mean squared error, and the mean absolute error for each of these models for the training sample. Each of these metrics represents some concept of ‘fit’. In addition to the values provide the rank for each model in each metric. If a model is #2 in one metric, then is it #2 in all metrics? Should we expect each metric to give us the same ranking of model ‘fit’.
+
+```{r}
+AdjRSquared <-
+  c(
+    forw_summ$adj.r.squared,
+    back_summ$adj.r.squared,
+    step_sum$adj.r.squared,
+    junk_summ$adj.r.squared
+  )
+
+AIC_list <-
+  c(AIC(forward_lm),
+    AIC(backward_lm),
+    AIC(stepwise_lm),
+    AIC(junk_lm))
+
+BIC_list <-
+  c(BIC(forward_lm),
+    BIC(backward_lm),
+    BIC(stepwise_lm),
+    BIC(junk_lm))
+
+MSE_list <-
+  c(
+    mean(forward_lm$residuals ^ 2),
+    mean(backward_lm$residuals ^ 2),
+    mean(stepwise_lm$residuals ^ 2),
+    mean(junk_lm$residuals ^ 2)
+  )
+
+RMSE_list <-
+  c(sqrt(mean(forward_lm$residuals ^ 2)), sqrt(mean(backward_lm$residuals ^ 2)), sqrt(mean(stepwise_lm$residuals ^ 2)), sqrt(mean(junk_lm$residuals ^ 2)))
+
+MAE_list <-
+  c(mean(abs(forward_lm$residuals)), mean(abs(backward_lm$residuals)), mean(abs(stepwise_lm$residuals)), mean(abs(junk_lm$residuals)))
+
+knitr::kable(data.frame(
+  Model = c("Forward", "Backward", "Stepwise", "Junk"),
+  AdjRSquared = AdjRSquared,
+  AIC = AIC_list,
+  BIC = BIC_list,
+  MSE = MSE_list,
+  RMSE = RMSE_list,
+  MAE = MAE_list
+))
+```
+
+I did not add a ranking to the dataframe due to the fact that each of the 3 model selection methods chose the same model. Therefore, the metrics were the same. The junk model performed the worst in each metric.  
+
+# 4. Predictive Accuracy  
+For each of the four models compute the Mean Squared Error (MSE) and the Mean Absolute Error (MAE) for the test sample. Which model fits the best based on these criteria? Did the model that fit best in-sample predict the best out-of-sample? Should we have a preference for the MSE or the MAE? What does it mean when a model has better predictive accuracy in-sample then it does out-of-sample?
+
+```{r}
+test_df <- test_df %>%
+  mutate(
+    LotFrontage = replace_na(LotFrontage, median(test_df$LotFrontage, na.rm = TRUE)),
+    MasVnrArea = replace_na(MasVnrArea, median(test_df$MasVnrArea, na.rm = TRUE)),
+    BsmtFinishRatio = replace_na(BsmtFinishRatio, median(test_df$BsmtFinishRatio, na.rm = TRUE))
+  )
+
+test_forward <- predict(forward_lm, newdata = test_df)
+test_backwards <- predict(backward_lm, newdata = test_df)
+test_step <- predict(stepwise_lm, newdata = test_df)
+test_junk <- predict(junk_lm, newdata = test_df)
+
+test_f_mse <- mean((test_df$SalePrice - test_forward) ^ 2)
+test_b_mse <- mean((test_df$SalePrice - test_backwards) ^ 2)
+test_s_mse <- mean((test_df$SalePrice - test_step) ^ 2)
+test_j_mse <- mean((test_df$SalePrice - test_junk) ^ 2)
+
+test_f_mae <- mean(abs(test_df$SalePrice - test_forward))
+test_b_mae <- mean(abs(test_df$SalePrice - test_backwards))
+test_s_mae <- mean(abs(test_df$SalePrice - test_step))
+test_j_mae <- mean(abs(test_df$SalePrice - test_junk))
+
+knitr::kable(data.frame(
+  Model = c("Forward", "Backward", "Stepwise", "Junk"),
+  TestMSE = c(test_f_mse, test_b_mse, test_s_mse, test_j_mse),
+  TestMAE = c(test_f_mae, test_b_mae, test_s_mae, test_j_mae)
+))
+```
+
+The three models chosen by automatic variable selection all performed the same (since they are the same model). The junk model performed the worst on both metrics. The MSE is higher on the test data, and the MAE is lower on the test data. When the MSE is lower on the training data, it normally means that the model is over-fitting the training data.
+
+# 5. Operational Validation  
+## Training Data
+
+```{r}
+# Training Data
+# Abs Pct Error
+forward_pct <- abs(forward_lm$residuals) / train_clean_df$SalePrice
+
+
+# Assign Prediction Grades;
+forward_PredictionGrade <-
+  ifelse(
+    forward_pct <= 0.10,
+    'Grade 1: [0.0.10]',
+    ifelse(
+      forward_pct <= 0.15,
+      'Grade 2: (0.10,0.15]',
+      ifelse(forward_pct <= 0.25, 'Grade 3: (0.15,0.25]',
+             'Grade 4: (0.25+]')
+    )
+  )
+
+forward_trainTable <- table(forward_PredictionGrade)
+forward_trainTable / sum(forward_trainTable)
+```
+
+```{r}
+# Training Data
+# Abs Pct Error
+junk_pct <- abs(junk_lm$residuals) / train_clean_df$SalePrice
+
+# Assign Prediction Grades
+junk_PredictionGrade <-
+  ifelse(
+    junk_pct <= 0.10,
+    'Grade 1: [0.0.10]',
+    ifelse(
+      junk_pct <= 0.15,
+      'Grade 2: (0.10,0.15]',
+      ifelse(junk_pct <= 0.25, 'Grade 3: (0.15,0.25]',
+             'Grade 4: (0.25+]')
+    )
+  )
+
+junk_trainTable <- table(junk_PredictionGrade)
+junk_trainTable / sum(junk_trainTable)
+```
+
+```{r}
+# Test Data
+# Abs Pct Error
+forward_testPCT <-
+  abs(test_df$SalePrice - test_forward) / test_df$SalePrice
+
+backward_testPCT <-
+  abs(test_df$SalePrice - test_backwards) / test_df$SalePrice
+
+stepwise_testPCT <-
+  abs(test_df$SalePrice - test_step) / test_df$SalePrice
+
+junk_testPCT <- abs(test_df$SalePrice - test_junk) / test_df$SalePrice
+```
+
+## Test Data
+
+```{r}
+# Assign Prediction Grades;
+forward_testPredictionGrade <-
+  ifelse(
+    forward_testPCT <= 0.10,
+    'Grade 1: [0.0.10]',
+    ifelse(
+      forward_testPCT <= 0.15,
+      'Grade 2: (0.10,0.15]',
+      ifelse(
+        forward_testPCT <= 0.25,
+        'Grade 3: (0.15,0.25]',
+        'Grade 4: (0.25+]'
+      )
+    )
+  )
+
+forward_testTable <- table(forward_testPredictionGrade)
+forward_testTable / sum(forward_testTable)
+```
+
+```{r}
+# Assign Prediction Grades;
+junk_testPredictionGrade <-
+  ifelse(
+    junk_testPCT <= 0.10,
+    'Grade 1: [0.0.10]',
+    ifelse(
+      junk_testPCT <= 0.15,
+      'Grade 2: (0.10,0.15]',
+      ifelse(
+        junk_testPCT <= 0.25,
+        'Grade 3: (0.15,0.25]',
+        'Grade 4: (0.25+]'
+      )
+    )
+  )
+
+junk_testTable <- table(junk_testPredictionGrade)
+junk_testTable / sum(junk_testTable)
+```
+
+I only built the prediction grade for the forward lm model since all the models were the same. Over 70% of the predictions on the test set were within 15% of the actual observation. Additionally, roughly 56% of the predictions on the test set were within 50%. This would fall under the "underwriting quality" category!
+
+# 6. Final Cleanup  
+
+For the final model, I've chose the model determined by the stepwise automated variable selection. I chose this model somewhat arbitrarily due to the fact that all three methods identified the same model.  
+
+We'll start by looking at the regression coefficients.  
+
+```{r}
+step_sum
+```
+
+The intercept term in this model doesn't hold any practical value. It means that the SalePrice would be equal to a negative value if all the variables were equal to zero. At first glance there are some variables that don't make much sense. BedroomAbvGr has a negative coefficient but TotRmsAbvGrd has a positive coefficient. This doesn't make any practical sense. This means that as the number of bedrooms above ground increases, the Sale Price decreases. The corresponding TotRmsAbvGrd variable would indicate that as total rooms above ground increases, the Sale Price would increase. These two variables should be heading in the same direction. There is possibly some collinearity going on here. Let's take a look at the relationship between the two variables.
+
+```{r}
+plot(
+  train_clean_df$BedroomAbvGr,
+  train_clean_df$TotRmsAbvGrd,
+  main = "Bedrooms Above Ground vs Total Rooms Above Ground",
+  xlab = "Bedrooms Above Ground",
+  ylab = "Total Rooms Above Ground",
+  col = "purple"
+)
+legend("topleft",
+       legend = paste("linear corr. =", round(
+         cor(train_clean_df$BedroomAbvGr, train_clean_df$TotRmsAbvGrd),
+         digits = 2
+       )))
+```
+
+There's obviously a positive relationship between these two variables. I'm going to attempt dropping the BedroomAbvGr variable and see if it dramatically affects the R-Squared value.
+
+## Remove BedroomsAbvGr
+
+```{r}
+reduced1 <-
+  lm(
+    formula = SalePrice ~ TotalSqftCalc + BsmtFinishRatio + GarageCars +
+      YearRemodel + MasVnrArea + QualityIndex + TotalBsmtSF + LotArea + TotRmsAbvGrd + WoodDeckSF + FullBath + LotFrontage +
+      GarageArea,
+    data = train_clean_df
+  )
+
+summary(reduced1)
+```
+
+We can see from the reduced model that removing BedroomAbvGr variable doesn't impact the adjusted R-Squared much. I think we can safely remove the variable to avoid a difficult to interpret coefficient. We can also see that the BsmtFinishRatio variable has a very large negative coefficient indicating that as the ratio of finished basement space to total basement space increases one unit, the Sale price will decrease by ~$35k (when all other variables held constant). This is another variable that doesn't make sense as one would expect the coefficient to be a positive value. Intuitively, as the usable space in the basement increases proportional to the total basement space, I would expect that to improve the value of a home. Again, I'll attempt to remove this from the reduced model to see if it's impact on adjusted R-squared.
+
+## Remove BsmtFinishRatio
+
+```{r}
+reduced2 <- 
+  lm(
+    formula = SalePrice ~ TotalSqftCalc + GarageCars +
+      YearRemodel + MasVnrArea + QualityIndex + TotalBsmtSF + LotArea + TotRmsAbvGrd + WoodDeckSF + FullBath + LotFrontage +
+      GarageArea,
+    data = train_clean_df
+  )
+
+summary(reduced2)
+```
+
+Compared the first reduced model, the adjusted R-Squared only decreased by 1% (0.8659 down to 0.8559). This means that the BsmtFinishRatio was only accounting for an additional 1% of variance in the Sale Price. I will keep this variable removed from the final model due to it's low account of variance and it's difficult to interpret coefficient.  
+
+Moving on, I can see that one coefficient is really small. The LotArea variable has a coefficient of 0.7004. This means that as the LotArea increases one unit (or one Square foot), the Sale price only increases 7 cents. This interpretation seems quite useless in our current model as there would have to be a dramatically bigger/smaller lot for it to have any noticeable impact. I'll attempt to eliminate it from the model and observe the change in adjusted R-Squared.  
+
+## Remove LotArea
+
+```{r}
+reduced3 <- 
+  lm(
+    formula = SalePrice ~ TotalSqftCalc + GarageCars +
+      YearRemodel + MasVnrArea + QualityIndex + TotalBsmtSF + TotRmsAbvGrd + WoodDeckSF + FullBath + LotFrontage +
+      GarageArea,
+    data = train_clean_df
+  )
+
+summary(reduced3)
+```
+
+The removal of the LotArea coefficient only decreased the adjusted R-squared by 0.0037. This tells me that the LotArea almost zero predictive power. I can safely remove this variable without any effect on the final model. At this point, I've removed 3 variables with only an overall drop in adjusted R-squared of 0.0178. We are on our way to a much more parsimonious model that will be much easier to explain.  
+
+The next variable that I'm going to remove is GarageArea. The resulting model can be seen below.
+
+## Remove GarageArea
+
+```{r}
+reduced4 <-
+  lm(
+    formula = SalePrice ~ TotalSqftCalc + GarageCars +
+      YearRemodel + MasVnrArea + QualityIndex + TotalBsmtSF + TotRmsAbvGrd + WoodDeckSF + FullBath + LotFrontage,
+      data = train_clean_df
+  )
+
+summary(reduced4)
+```
+
+We can see that the GarageArea variable only accounted for a small amount of variance in SalePrice (0.8522 down to 0.8517). I will keep it out of the final model. Next I will remove the LotFrontage which represents the exposure of the property to the street. It has the lowest t-value out of the remaining variables.
+
+## Remove LotFrontage
+
+```{r}
+reduced5 <- 
+  lm(
+    formula = SalePrice ~ TotalSqftCalc + GarageCars +
+      YearRemodel + MasVnrArea + QualityIndex + TotalBsmtSF + TotRmsAbvGrd + WoodDeckSF + FullBath,
+      data = train_clean_df
+  )
+
+summary(reduced5)
+```
+
+The adjusted squared has only decreased 0.0011 by removing LotFrontage. This variable provides little to no predictive value to Sale Price, so I will remove it from the final model.  
+
+So far I have removed 5 variables and the adjusted R-squared has only gone down 0.0194. In my opinion, this is an acceptable drop in order to have a more succinct and interpret-able model.  
+
+I'll attempt to remove WoodDeckSF next.
+
+## Remove WoodDeckSF
+
+```{r}
+reduced6 <-
+  lm(
+    formula = SalePrice ~ TotalSqftCalc + GarageCars +
+      YearRemodel + MasVnrArea + QualityIndex + TotalBsmtSF + TotRmsAbvGrd + FullBath,
+    data = train_clean_df
+  )
+
+summary(reduced6)
+  
+```
+
+The WoodDeckSf variable only contributed a very minor amount to the adjusted R-squared value, so it will be removed from the final model. The next variable to consider is FullBath.  
+
+## Remove FullBath
+
+```{r}
+reduced7 <-
+  lm(
+    formula = SalePrice ~ TotalSqftCalc + GarageCars +
+      YearRemodel + MasVnrArea + QualityIndex + TotalBsmtSF + TotRmsAbvGrd,
+    data = train_clean_df
+  )
+
+summary(reduced7)
+```
+
+Honestly, I thought that FullBath would account for a decent amount of variance in Sale Price, but the adjusted R-squared only decreased by 0.0027. I will remove this variable from the final model. From here on out, I will only display the adjusted R-squared values as I remove variables to reduce the clutter of the model summaries.
+
+## Remove TotRmsAbvGrd  
+
+```{r}
+reduced8 <-
+  lm(
+    formula = SalePrice ~ TotalSqftCalc + GarageCars +
+      YearRemodel + MasVnrArea + QualityIndex + TotalBsmtSF,
+    data = train_clean_df
+  )
+
+red8sum <- summary(reduced8)
+r8ars <- round(red8sum$adj.r.squared, digits = 4)
+```
+
+Removing the variable TotRmsAbvGrd reduced the adjusted R-squared from 0.8468 to `r r8ars`, resulting in a drop of 0.0107. I've still only come down 0.0321 in adjusted R-squared from my original model, and I've removed 8 variables. These 8 variables only accounted for 3.2% of the variance in Sale Price. I don't consider this to be a significant amount and am currently happy with the trade-off for a simpler model.  
+
+## Remove TotBsmtSF  
+
+```{r}
+reduced9 <-
+  lm(
+    formula = SalePrice ~ TotalSqftCalc + GarageCars +
+      YearRemodel + MasVnrArea + QualityIndex,
+    data = train_clean_df
+  )
+
+red9sum <- summary(reduced9)
+r9ars <- round(red9sum$adj.r.squared, digits = 4)
+```
+
+After removing TotBsmtSF, the adjusted R-squared decreased to 0.8245. This is a 0.134 drop. I will keep this variable in the model for now.  
+
+## Remove GarageCars  
+
+```{r}
+reduced10 <-
+  lm(
+    formula = SalePrice ~ TotalSqftCalc +
+      YearRemodel + MasVnrArea + QualityIndex + TotalBsmtSF,
+    data = train_clean_df
+  )
+
+red10sum <- summary(reduced10)
+r10ars <- round(red10sum$adj.r.squared, digits = 4)
+```
+
+The removal of GarageCars resulted in a drop of 0.0258 in adjusted R-squared. I will keep this variable in the model.  
+
+## Remove QualityIndex  
+
+```{r}
+reduced11 <-
+  lm(
+    formula = SalePrice ~ TotalSqftCalc + GarageCars +
+      YearRemodel + MasVnrArea + TotalBsmtSF,
+    data = train_clean_df
+  )
+
+red11sum <- summary(reduced11)
+r11ars <- round(red11sum$adj.r.squared, digits = 4)
+```
+
+Removing QualityIndex resulted in a 0.017 decrease in adjusted R-squared. I will keep this variable in the model.  
+
+## Remove YearRemodel  
+
+```{r}
+reduced12 <-
+  lm(
+    formula = SalePrice ~ TotalSqftCalc + GarageCars +
+      MasVnrArea + QualityIndex + TotalBsmtSF,
+    data = train_clean_df
+  )
+
+red12sum <- summary(reduced12)
+r12ars <- round(red12sum$adj.r.squared, digits = 4)
+```
+
+Removing YearRemodel resulted in a decrease of 0.0183 in adjusted R-squared. I will keep this variable in the model.  
+
+## Remove MasVnrArea  
+
+```{r}
+reduced13 <-
+  lm(
+    formula = SalePrice ~ TotalSqftCalc + GarageCars +
+      YearRemodel + QualityIndex + TotalBsmtSF,
+    data = train_clean_df
+  )
+
+red13sum <- summary(reduced13)
+r13ars <- round(red13sum$adj.r.squared, digits = 4)
+```
+
+Removing MasVnrArea results in a decrease of 0.0157 to adjusted R-squared. I'm going to keep this variable in the model.  
+
+## Final Model  
+
+At this point, the only remaining variable is TotalSqftCalc. I'm not going to test this as it can be derived from the prior tests. It accounts for the most variance in the Sale Price. The final model is as follows:  
+
+```{r}
+summary(reduced8)
+```
+
+### Regression Diagnostics  
+Below we can see the diagnostic graphs from the model. It appears there is possibly a very slight increase in variance with an increase in $\hat{Y}$. I've plotted the histogram of the residuals to further investigate.
+```{r}
+# Enhanced histogram function
+enhanced_hist <- function(x, title_alias) {
+  par(mfrow=c(1, 2))
+  skew <- round(moments::skewness(x), digits = 3)
+  kurtosis <- round(moments::kurtosis(x), digits = 3)
+  
+  #Histogram
+  hist(
+    x = x,
+    main = paste("Histogram of", title_alias),
+    xlab = title_alias,
+    col = "purple"
+  )
+  legend("topright",
+         legend = paste("kurtosis =", kurtosis, "&", "skew =", skew))
+  
+  # Boxplot
+  boxplot(
+    x = x,
+    main = paste("Boxplot of", title_alias),
+    xlab = title_alias,
+    col = "purple",
+    outcol = "red"
+    )
+}
+```
+
+```{r fig.width=10, fig.height=5}
+par(mfrow = c(2,2))
+plot(reduced8)
+```
+
+The histogram shows that there is a very slight right skew in the residuals, but I do not think this is blatant enough to consider the residuals exhibiting heteroscedasticity.
+
+```{r fig.width=10, fig.height=5}
+enhanced_hist(reduced8$residuals, title_alias = "Final Residuals")
+```
+
+```{r}
+# Regression Diagnostics
+regression_diagnostics <-
+  function(model,
+           cooks_threshold = 1,
+           leverage_threshold = 2) {
+    # Cooks Distance
+    cooks_dist <- cooks.distance(model)
+    potential_outliers <- cooks_dist[cooks_dist > cooks_threshold]
+    if (length(potential_outliers) == 0) {
+      cooks_outliers <- 0
+    } else {
+      cooks_outliers <- potential_outliers
+    }
+    
+    # Leverage
+    hat_vals <- hatvalues(model)
+    k <- length(model$coefficients) - 1
+    n <- length(model$residuals)
+    hat_outliers <-
+      hat_vals[hat_vals > ((leverage_threshold * (k + 1)) / n)]
+    if (length(hat_outliers) == 0) {
+      hat_out <- 0
+    } else {
+      hat_out <- hat_outliers
+    }
+    return(list(
+      CooksDistanceOutliers = cooks_outliers,
+      LeverageOutliers = hat_out
+    ))
+  }
+
+reg_diag_print <- function(rd) {
+  if (sum(rd$CooksDistanceOutliers) == 0) {
+    print("There are no outliers based on Cook's distance.")
+  } else {
+    print(paste("There are", length(rd$CooksDistanceOutliers), "potential outliers based on Cook's distance."))
+  }
+  if (sum(rd$LeverageOutliers) == 0) {
+    print("There are no leverage outliers.")
+  } else {
+    print(paste("There are", length(rd$LeverageOutlier), "potential leverage outliers."))
+  }
+}
+```
+
+Cooks Distance & Leverage:  
+There appear to be a little over 100 values outside the leverage threshold.
+
+```{r}
+reg8_diag <- regression_diagnostics(reduced8)
+reg_diag_print(reg8_diag)
+```
+
+Overall, I think that this is a pretty good model. It meets the assumptions within reason, and I've managed to eliminate unnecessary variables that don't contribute to predicting Sale Price.  
+
+# 7. Reflection / Conclusion  
+After working with this data for an extended period of time, the biggest challenges seem to lie in the data wrangling prior to modeling work. This is pretty typical in my experience as far as analytic work goes. To improve predictive accuracy, I would consider going back and including more dummy-coded categorical variables. The trade-off with this route is that it becomes much more work to interpret the model. Generally, I'm a big fan of the motto "simpler is better". I strive to achieve a level of parsimony. When models become too big or complicated, the interpretation factor also increases. Additionally, if we add lots of variables that only increase the predictive ability of the model by minuscule amounts, we've unnecessarily complicated our model and we may begin to over-fit. There is a time and a place for more complicated models and techniques, but I think a lot can be achieved with simpler methods. I've probably learned the most in this class over any class in the program thus far. I'm looking forward to moving on to the next portion of the class.

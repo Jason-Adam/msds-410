@@ -1,0 +1,752 @@
+---
+title: "Computational Assignment 2"
+author: Jason Adam
+date: July 14, 2019
+output: pdf_document
+---
+
+```{r knitr_options, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+# Part 1: Mechanics and Computations  
+## Model 1  
+Let’s consider the following R output for a regression model which we will refer to as Model 1. (Note 1: In the ANOVA table, I have added 2 rows – (1) Model DF and Model SS - which is the sum of the rows corresponding to all the 4 variables (2) Total DF and Total SS - which is the sum of all the rows; Note 2: The F test corresponding to the Model denotes the overall significance test. In R output, you will see that at the bottom of the Coefficients table)
+
+![](model_1.png)
+
+**1. How many observations are in the sample data?**
+
+The total value from adding up the DF column in the ANOVA table equals 71. The total represents $n-1$, therefore the number of observations is equal to 72.
+
+**2. Write out the null and alternate hypotheses for the t-test for Beta1.**  
+
+$$
+Null=H_{0}:\beta_{1}=0
+$$
+
+$$
+Alternate=H_{a}:\beta_{1}\neq0
+$$
+
+**3. Compute the t-statistics for Beta1. Conduct the hypothesis test and interpret the result.**  
+
+$$
+T=\frac{(\hat\beta_{1}-\beta^{(0)}_{1})}{S_{\hat\beta_{1}}}
+$$
+
+$$
+T=\frac{(2.186-0)}{0.4104}=5.3256
+$$
+
+```{r}
+T <- round((2.186/0.4104), digits = 4)
+#print(paste("The t-statistic for Beta1 =", T))
+
+critical_t = round(qt(0.975, 70), digits = 4)
+```
+
+Using $\alpha=0.05$ and a t-distribution equal to $t_{n-2}$ under $H_{0}$, the critical t-statistic can be calculated using a two-sided t-test as:  
+
+$$
+t_{n-2,1-\frac{\alpha}{2}}=t_{70,0.975}=1.9944
+$$
+
+The t-statistic (5.3265) is greater than the critical t-statistic of 1.9944 under the two-sided t-test, therefore we can reject the null hypothesis ($H_{0}$). Rejecting the null hypothesis implies that $X_1$ provides significant information for predicting $Y$. In essence, a model with $X_1$ is better than a model without $X_1$.
+
+**4. Compute the R-squared value for Model 1, using information from the ANOVA table.**  
+
+$$
+R^2=\frac{SSY-SSE}{SSY}
+$$
+
+$$
+R^2=\frac{(2756.37-630.36)}{2756.37}=0.7713
+$$
+
+The $R^2$ value of 0.7713 indicates that the independent variables in model 1 account for approximately $77.13\%$ of the variance in Y. It is equivalent to the regression sum of squares proportionate to the total sum of squares. A value closer to 1 indicates that the model is accounting for a majority of the variance in the response variable (Y).
+
+```{r}
+#round((2756.37-630.36)/2756.37, digits = 4)
+```
+
+**5. Compute the Adjusted R-Squared value for Model 1. Discuss why Adjusted R-Squared and the R-Squared values are different.**  
+
+$$
+Adjusted\ R^2=1-(1-R^2)*(\frac{n-1}{n-k-1})
+$$
+
+$$
+Adjusted\ R^2=1-(1-0.7713)*(\frac{71}{67})=0.7577
+$$
+
+Adjusted $R^2$ differs from $R^2$ due to the degrees of freedom. Regular $R^2$ will increase for every independent variable added to the model. If the regression sum of squares naturally increases with additional independent variables, the residual sum of squares will shrink, hence pulling the ratio closer to 1. Adjusted $R^2$ factors in the total degrees of freedom (n-1) as well as the error (residual) degrees of freedom (n-k-1) to create a penalizing factor. If the SSR increases just a slight amount, but 3 additional independent variables were added to the model, the Adjusted $R^2$ will potentially decrease as the penalizing factor will be larger with a minuscule increase in un-adjusted $R^2$.
+
+**6. Write out the null and alternate hypotheses for the overall F-test.**  
+
+$$
+Null=H_0:\beta_1=\beta_2=\beta_3=\beta_4=0
+$$
+
+$$
+Alternate=H_a:\beta_i\neq0\ for\ at\ least\ one\ i
+$$
+
+**7. Compute the F-Statistic for the Overall F-test. Conduct the hypothesis test and interpret the result.**  
+
+$$
+F=\frac{Mean\ Squared\ Regression}{Mean\ Squared\ Residual}=\frac{(\frac{(SSY-SSE)}{k})}{(\frac{SSE}{(n-k-1)})}
+$$
+
+$$
+F=\frac{(\frac{(2756.37-630.36)}{4})}{(\frac{630.36}{(72-4-1)})}=56.4926
+$$
+
+```{r}
+numerator <- (2756.37-630.36) / 4
+denominator <- 630.36 / 67
+#round(numerator / denominator, digits = 4)
+```
+
+The critical F value can be computed using the following point:  
+
+$$
+F_{k,\ n-k-1,\ 1-\alpha}=F_{4,\ 72-4-1,\ 1-0.05}=2.5087
+$$
+
+```{r}
+#round(qf(0.95, 4, 67), digits = 4)
+```
+
+Based on the F-Statistic 56.4926 we can reject the null hypothesis. The F-Statistic is much greater than the critical F value of 2.5087 at a type I error rate of $\alpha=0.05$.  We can conclude that the observed independent variables significantly help to predict the response variable. This does not necessarily mean that all three independent variables are meaningful.  
+
+## Model 2  
+Now let's consider the following R output for an alternate regression model which we will refer to as Model 2.  
+![](model_2.1.png)
+
+![](model_2.2.png)
+
+**8. Now let's consider Model 1 and Model 2 as a pair of models. Does Model 1 nest Model 2 or does Model 2 nest Model 1? Explain.**  
+
+Model 1 is nested inside Model 2. This means that Model 2 has all of the independent variables of Model 1 plus additional independent variables not included in Model 1.  
+
+**9. Write out the null and alternate hypotheses for a nested F-test using Model 1 and Model 2.**  
+
+$$
+Null=H_0:\beta_5=\beta_6=0\ (in\ Model\ 2)
+$$
+
+$$
+Alternate=H_a:\beta_5\neq0\ or\ \beta_6\neq0
+$$
+
+**10. Compute the F-statistic for a nested F-test using Model 1 and Model 2. Conduct the hypothesis test and interpret the results.**  
+
+$$
+F_{(X_5,X_6|X_1,X_2,X_3,X_4)}=\frac{[\frac{Regression\ SS(Model\ 2)-Regression\ SS(Model\ 1)}{s}]}{MS\ Residual(Model\ 2)}
+$$
+
+$$
+F=\frac{(\frac{2183.75946-2126}{2})}{8.80937}=3.2783
+$$
+
+```{r}
+numerator <- (2183.75946 - 2126) / 2
+denominator <- 8.80937
+
+#round(numerator / denominator, digits = 4)
+```
+
+For $\alpha=0.05$ the critical point is:  
+
+$$
+F_{s,\ n-q-s-1,\ 1-\alpha}=F_{2,\ 72-4-2-1,\ 0.95}=3.1381
+$$
+
+```{r}
+#round(qf(0.95, 2, 65), digits = 4)
+```
+
+We can reject the null hypothesis at $\alpha=0.05$. The F-Statistic is greater than the critical value, therefore we can conclude that this set of two additional independent variables significantly help in predicting the response variable (Y).  
+
+# Part 2: Application  
+For this part of the assignment, you are to use the AMES Housing Data you worked with during Modeling Assignment #1.  
+
+## Model 3  
+**11. Based on your EDA from Modeling Assignment #1, focus on 10 of the continuous quantitative variables that you though/think might be good explanatory variables for SALESPRICE.   Is there a way to logically group those variables into 2 or more sets of explanatory variables?   For example, some variables might be strictly about size while others might be about quality.   Separate the 10 explanatory variables into at least 2 sets of variables.  Describe why you created this separation.  A set must contain at least 2 variables.**
+
+```{r message=FALSE, warning=FALSE}
+library(readr)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+# Load the dataset
+ames_df <-
+  read_csv("ames_housing_data.csv",
+           col_types = list("PoolQC" = col_character()))
+
+# Create some additional columns
+ames_df$TotalSF <- ames_df$FirstFlrSF + ames_df$SecondFlrSF
+ames_df$HouseAge <- ames_df$YrSold - ames_df$YearBuilt
+ames_df$QualityIndex <- ames_df$OverallQual * ames_df$OverallCond
+ames_df$logSalePrice <- log(ames_df$SalePrice)
+ames_df$price_sqft <- ames_df$SalePrice / ames_df$TotalSF
+```
+
+```{r}
+# Subset the data; drop-out waterfall and 20 variables for EDA
+subset_df <- ames_df %>%
+  filter(
+    Zoning %in% c("RH", "RL", "RP", "RM", "FV"),
+    BldgType == "1Fam",
+    SaleCondition == "Normal",
+    GrLivArea < 4000
+  )
+
+model_df <- subset_df %>%
+  select(
+    SalePrice,
+    LotFrontage,
+    LotArea,
+    FirstFlrSF,
+    SecondFlrSF,
+    WoodDeckSF,
+    TotalBsmtSF,
+    GarageArea,
+    GrLivArea,
+    BsmtUnfSF,
+    QualityIndex,
+    YearBuilt
+  )
+
+# Convert Year built to start at 0
+model_df$YearBuilt <- model_df$YearBuilt - min(model_df$YearBuilt)
+
+# Create table with included variables
+columns <- colnames(model_df)
+var_types <-
+  c(
+    "Continuous",
+    "Continuous",
+    "Continuous",
+    "Continuous",
+    "Continuous",
+    "Continuous",
+    "Continuous",
+    "Continuous",
+    "Continuous",
+    "Continuous",
+    "Discrete",
+    "Discrete"
+  )
+var_group <-
+  c(
+    "Response",
+    "Exterior",
+    "Exterior",
+    "Interior",
+    "Interior",
+    "Exterior",
+    "Interior",
+    "Exterior",
+    "Interior",
+    "Interior",
+    "Quality",
+    "Quality"
+  )
+
+knitr::kable(data.frame(
+  "Variable" = columns,
+  "Type" = var_types,
+  "Group" = var_group
+))
+```
+
+I decided to split up the independent variables into three sets or groups. The first group (Exterior) contains four variables and is associated with characteristics that are external to the main house. The second (and largest) group (Interior) contains variables related to the size of the home and it's components. The third group is related to quality. I transformed YearBuilt to begin as 0 at the minimum year in the data set. I added the Year built in with the quality group as I believe it's a perception of quality in terms of how old the house is.  
+
+**12. Pick one of the sets of explanatory variables. Run a multiple regression model using the explanatory variables from this set to predict the SalePrice(Y). Call this Model 3. Conduct and interpret the following hypothesis tests, being sure you are clearly stating the null and alternate hypotheses in each case: a) all model coefficients individually b) the Omnibus Overall F-test.**  
+
+Below is the model summary of the **Interior** group of independent variables.
+
+```{r}
+model_3 <-
+  lm(SalePrice ~ FirstFlrSF + SecondFlrSF + TotalBsmtSF + GrLivArea + BsmtUnfSF,
+     data = model_df)
+summary(model_3)
+```
+
+Hypothesis tests were conducted on each of the model coefficients using a two-sided t-test. Prior to stating the hypotheses, I am going to establish the type I error threshold at $\alpha=0.05$. The critical t value in this t-distribution is calculated with the following formula:  
+
+$$
+t_{n-2,\ 1-\frac{\alpha}{2}}=t_{1985,\ 0.975}=1.9612
+$$
+
+The following formula will be used to calculate the Test Statistic (T) for each of the regression coefficients.  
+
+$$
+T=\frac{(\hat\beta_i-\beta^{(0)}_i)}{S_{\hat\beta_i}}
+$$
+
+If the absolute value of our coefficient t-statistics are greater than 1.9612 we can reject the null hypothesis that the coefficient is equal to zero. The null and alternate hypotheses for each regression coefficient are stated below.  
+
+**Intercept**
+
+$$
+Null=H_0:\beta_0=0
+$$
+
+$$
+Alternate=H_a:\beta_0\neq0
+$$
+
+The test statistic for the intercept is:  
+
+$$
+T=\frac{(-28907.500-0)}{2944.369}=-9.8179
+$$
+
+This value indicates that we should reject the null hypothesis, however it is not plausible for us to have an intercept that is negative. The response variable is the Sale Price of a home, and this number holds no meaning in the model if it is negative.  
+
+**FirstFlrSF**  
+
+$$
+Null=H_0:\beta_1=0
+$$
+
+$$
+Alternate=H_a:\beta_1\neq0
+$$
+
+The test statistic for FirstFlrSF is:  
+
+$$
+T=\frac{(112.171-0)}{16.618}=6.75
+$$
+
+This value indicates that we should reject the null hypothesis. This means that FirstFlrSF provides significant information for predicting Sale Price at an type I error rate of 0.05.  
+
+**SecondFlrSF**  
+
+$$
+Null=H_0:\beta_2=0
+$$
+
+$$
+Alternate=H_a:\beta_2\neq0
+$$
+
+The test statistic for SecondFlrSF is:  
+
+$$
+T=\frac{(114.504-0)}{16.260}=7.0421
+$$
+
+This value indicates that we should reject the null hypothesis. This means that SecondFlrSF provides significant information for predicting Sale Price.  
+
+**TotalBsmtSF**  
+
+$$
+Null=H_0:\beta_3=0
+$$
+
+$$
+Alternate=H_a:\beta_3\neq0
+$$
+
+The test statistic for TotalBsmtSF is:  
+
+$$
+T=\frac{(83.259-0)}{3.239}=25.7052
+$$
+
+This value indicates that we should reject the null hypothesis. This means that TotalBsmtSF provides significant information for predicting Sale Price.  
+
+**GrLivArea**  
+
+$$
+Null=H_0:\beta_4=0
+$$
+
+$$
+Alternate=H_a:\beta_4\neq0
+$$
+
+The test statistic for GrLivArea is:  
+
+$$
+T=\frac{(-21.212-0)}{16.151}=-1.3134
+$$
+
+This value is less than our critical t value of 1.9612 therefore we fail to reject the null hypothesis. This indicates that for a true underlying straight model, GrLivArea provides little or no help in predicting Sale Price or that the relationship between the variables in non-linear.  
+
+**BsmtUnfSF**  
+
+$$
+Null=H_0:\beta_5=0
+$$
+
+$$
+Alternate=H_a:\beta_5\neq0
+$$
+
+The test statistic for BsmtUnfSF is:  
+
+$$
+T=\frac{(-26.001-0)}{2.146}=-12.116
+$$
+
+This value doesn't line up exactly with our model summary, but I believe this is due to rounding error. The value indicates that we can reject the null hypothesis. This indicates that BsmtUnfSF provides significant information for predicting Sale Price.  
+
+**Omnibus Overall F-test**  
+
+The formula for calculating the F-statistic for overall model is:
+
+$$
+F=\frac{Mean\ Squared\ Regression}{Mean\ Squared\ Residual}=\frac{(\frac{(SSY-SSE)}{k})}{(\frac{SSE}{(n-k-1)})}
+$$
+
+The following is the ANOVA table from Model 3. The values will be used to calculate the overall F-statistic.
+
+```{r}
+anova(model_3)
+```
+
+The hypotheses are as follows:  
+
+$$
+Null=H_0:\beta_1=\beta_2=\beta_3=\beta_4=\beta_5=0
+$$
+
+$$
+Alternate=H_a:\beta_i\neq0\ for\ at\ least\ one\ i
+$$
+
+The F-statistic is calculated as follows:  
+
+```{r echo=TRUE}
+# Write ANOVA results to dataframe
+anova_3 <- anova(model_3)
+
+# Extract SSY & SSE
+SSY <- sum(anova_3$`Sum Sq`)
+SSE <- anova_3$`Sum Sq`[6]
+
+# Define k & n
+k <- 5
+n <- nrow(model_df)
+
+# Calculate numerator and denominator
+numerator_f <- (SSY - SSE) / k
+denominator_f <-  SSE / (n - k - 1)
+
+# Calculate F
+F <- round(numerator_f / denominator_f)
+
+# Output
+print(paste("The F-statistic =", F))
+```
+
+I decided to represent the F-statistic with R code as the Sum of Squares values are quite large and don't lend themselves well to LaTex formulas. The critical F value is calculated with the following:  
+
+$$
+F_{k,\ n-k-1,\ 1-\alpha}=F_{5,\ 1987-5-1,\ 1-0.05}=2.2186
+$$
+
+The F-statistic of 1266 is much greater than the critical value of 2.2186. This allows us to reject the null hypothesis. This indicates that there is a significant relationship between the independent variables and the response variable, however it does not indicate which independent variables are meaningful.  
+
+## Model 4
+
+**13. Pick the other set (or one of the other sets) of explanatory variables. Add this set of variables to those in Model 3. In other words, Model 3 should be nested within Model 4. Run a multiple regression model using the explanatory variables from this set to predict SALEPRICE(Y). Conduct and interpret the following hypothesis tests, being sure you clearly state the null and alternative hypotheses in each case: a) all model coefficients b) the Omnibus Overall F-test.**  
+
+Model 4 was constructed using the same independent variables from Model 3 (Interior Group) along with the addition of the Quality Group variables (QualityIndex and YearBuilt). The model summary can be seen below.
+
+```{r}
+model_4 <-
+  lm(
+    SalePrice ~ FirstFlrSF + SecondFlrSF + TotalBsmtSF + GrLivArea + BsmtUnfSF + QualityIndex + YearBuilt,
+    data = model_df
+  )
+m4_summary <- summary(model_4)
+m4_summary
+```
+
+Hypothesis tests were conducted on each of the model coefficients using a two-sided t-test. Prior to stating the hypotheses, I am going to establish the type I error threshold at $\alpha=0.05$. The critical t value in this t-distribution is calculated with the following formula:  
+
+$$
+t_{n-2,\ 1-\frac{\alpha}{2}}=t_{1985,\ 0.975}=1.9612
+$$
+
+The following formula will be used to calculate the Test Statistic (T) for each of the regression coefficients.  
+
+$$
+T=\frac{(\hat\beta_i-\beta^{(0)}_i)}{S_{\hat\beta_i}}
+$$
+
+If the absolute value of our coefficient t-statistics greater than 1.9612 we can reject the null hypothesis that the coefficient is equal to zero. The null and alternate hypotheses for each regression coefficient are stated below.  
+
+**Intercept**
+
+$$
+Null=H_0:\beta_0=0
+$$
+
+$$
+Alternate=H_a:\beta_0\neq0
+$$
+
+The test statistic for the intercept is:  
+
+$$
+T=\frac{(-107901.75428-0)}{3214.639233}=-33.5657
+$$
+
+Similar to Model 3, the intercept is a negative value. This is not useful in the model as the response variable is Sale Price and can not be negative.  
+
+**FirstFlrSF**  
+
+$$
+Null=H_0:\beta_1=0
+$$
+
+$$
+Alternate=H_a:\beta_1\neq0
+$$
+
+The test statistic for FirstFlrSF is:  
+
+$$
+T=\frac{(46.45882-0)}{13.1183}=3.5415
+$$
+
+This value indicates that we should reject the null hypothesis. This means that FirstFlrSF provides significant information for predicting Sale Price at an type I error rate of 0.05.  
+
+**SecondFlrSF**  
+
+$$
+Null=H_0:\beta_2=0
+$$
+
+$$
+Alternate=H_a:\beta_2\neq0
+$$
+
+The test statistic for SecondFlrSF is:  
+
+$$
+T=\frac{(36.87198-0)}{12.8954}=2.8583
+$$
+
+This value indicates that we should reject the null hypothesis. This means that SecondFlrSF provides significant information for predicting Sale Price.  
+
+**TotalBsmtSF**  
+
+$$
+Null=H_0:\beta_3=0
+$$
+
+$$
+Alternate=H_a:\beta_3\neq0
+$$
+
+The test statistic for TotalBsmtSF is:  
+
+$$
+T=\frac{(53.0579-0)}{2.6873}=19.7436
+$$
+
+This value indicates that we should reject the null hypothesis. This means that TotalBsmtSF provides significant information for predicting Sale Price.  
+
+**GrLivArea**  
+
+$$
+Null=H_0:\beta_4=0
+$$
+
+$$
+Alternate=H_a:\beta_4\neq0
+$$
+
+The test statistic for GrLivArea is:  
+
+$$
+T=\frac{(34.89-0)}{12.7361}=2.7395
+$$
+
+This value indicates that we should reject the null hypothesis. This means that GrLivArea provides significant information for predicting Sale Price.  
+
+**BsmtUnfSF**  
+
+$$
+Null=H_0:\beta_5=0
+$$
+
+$$
+Alternate=H_a:\beta_5\neq0
+$$
+
+The test statistic for BsmtUnfSF is:  
+
+$$
+T=\frac{(-21.07989-0)}{1.68499}=-12.5104
+$$
+
+This value indicates that we should reject the null hypothesis. This means that BsmtUnfSF provides significant information for predicting Sale Price.  
+
+**QualityIndex**  
+
+$$
+Null=H_0:\beta_6=0
+$$
+
+$$
+Alternate=H_a:\beta_6\neq0
+$$
+
+The test statistic for QualityIndex is:  
+
+$$
+T=\frac{(1795.97513-0)}{74.2632}=24.1842
+$$
+
+This value indicates that we should reject the null hypothesis. This means that QualityIndex provides significant information for predicting Sale Price.  
+
+**YearBuilt**  
+
+$$
+Null=H_0:\beta_7=0
+$$
+
+$$
+Alternate=H_a:\beta_7\neq0
+$$
+
+The test statistic for YearBuilt is:  
+
+$$
+T=\frac{(668.78758-0)}{23.7565}=28.1518
+$$
+
+This value indicates that we should reject the null hypothesis. This means that YearBuilt provides significant information for predicting Sale Price.  
+
+**Omnibus Overall F-test**  
+
+The formula for calculating the F-statistic for overall model is:
+
+$$
+F=\frac{Mean\ Squared\ Regression}{Mean\ Squared\ Residual}=\frac{(\frac{(SSY-SSE)}{k})}{(\frac{SSE}{(n-k-1)})}
+$$
+
+The following is the ANOVA table from Model 4. The values will be used to calculate the overall F-statistic.
+
+```{r}
+anova(model_4)
+```
+
+The hypotheses are as follows:  
+
+$$
+Null=H_0:\beta_1=\beta_2=\beta_3=\beta_4=\beta_5=\beta_6=\beta_7=0
+$$
+
+$$
+Alternate=H_a:\beta_i\neq0\ for\ at\ least\ one\ i
+$$
+
+The F-statistic is calculated as follows:  
+
+```{r echo=TRUE}
+# Write ANOVA results to dataframe
+anova_4 <- anova(model_4)
+
+# Extract SSY & SSE
+SSY <- sum(anova_4$`Sum Sq`)
+SSE <- anova_4$`Sum Sq`[8]
+
+# Define k & n
+k <- 7
+n <- nrow(model_df)
+
+# Calculate numerator and denominator
+numerator_f <- (SSY - SSE) / k
+denominator_f <-  SSE / (n - k - 1)
+
+# Calculate F
+F <- round(numerator_f / denominator_f)
+
+# Output
+print(paste("The F-statistic =", F))
+```
+
+I decided to represent the F-statistic with R code as the Sum of Squares values are quite large and don't lend themselves well to LaTex formulas. The critical F value is calculated with the following:  
+
+$$
+F_{k,\ n-k-1,\ 1-\alpha}=F_{7,\ 1987-7-1,\ 1-0.05}=2.0142
+$$
+
+The F-statistic of 1665 is much greater than the critical value of 2.0142. This allows us to reject the null hypothesis. This indicates that there is a significant relationship between the independent variables and the response variable, however it does not indicate which independent variables are meaningful.  
+
+## Nested Model  
+
+**14. Write out the null and alternate hypotheses for a nested F-test using Model 3 and Model 4, to determine if the Model 4 variables, as a set, are useful for predicting Sale Price or not. Compute the F-statistic for this nested F-test and interpret the results.**  
+
+A partial F-test is to be used with nested models. The goal is to test whether the addition of the Quality group variables (as a set) significantly improved the prediction of Y given that the Interior group variables were already in the model.  
+
+The equation for the partial F-test is as follows:  
+
+$$
+F(X^{*}_1,X^{*}_2\ |\ X_1,X_2,X_3,X_4,X_5)=\frac{(\frac{SS(X^{*}_1,X^{*}_2\ |\ X_1,X_2,X_3,X_4,X_5)}{s})}{MS\ Residual\ (X^{*}_1,X^{*}_2, X_1,X_2,X_3,X_4,X_5)}
+$$
+
+Variables denoted as $X^*$ represent the two additional independent variables added to the model. The value $s$ represents the number of added independent variables.  
+
+The hypotheses can be stated as follows:  
+
+$$
+Null=H_0:\beta^{*}_1=\beta^{*}_2=0\ in\ the\ full\ model
+$$
+
+$$
+Alternate=H_a:\beta^{*}_1\neq0\ or\ \beta^{*}_2\neq0\ in\ the\ full\ model
+$$
+
+The equation to calculate the F-statistic can be rewritten in order to easily use values from the model anova tables.  
+
+$$
+F(X^{*}_1,X^{*}_2\ |\ X_1,X_2,X_3,X_4,X_5)=\frac{(\frac{(Regression\ SS(full)-Regression\ SS(reduced))}{s})}{MS\ Residual(full)}
+$$
+
+If we input the values from the model anova tables we get the following. Again, I've chose to perform the calculations in R due to LaTex limitations.  
+
+```{r echo=TRUE}
+# Get Regression Sum Sq. from both Models
+full_regression_ss <- sum(anova_4$`Sum Sq`[1:7])
+reduced_regression_ss <- sum(anova_3$`Sum Sq`[1:5])
+
+# Set s value: i.e. the number of additional independent variables
+s <- 2
+df <- nrow(model_df) - 7 - 1
+
+# Get MS Residual (full)
+full_ms_residual <- anova_4$`Sum Sq`[8] / df
+
+# Numerator & Denominator
+numerator_nest <- (full_regression_ss - reduced_regression_ss) / s
+denominator_nest <- full_ms_residual
+
+# Compute F
+F_nest <- round(numerator_nest / denominator_nest, digits = 4)
+
+# Output
+print(paste("The F-statistic =", F_nest))
+```
+
+The critical F value can be computed as follows:  
+
+$$
+F_{s,\ n-q-s-1,\ 1-\alpha}=F_{2,\ 1987-5-2-1,\ 1-0.05}=3.0003
+$$
+
+The computed F-statistic is much greater than the critical value of 3.0003. With this we can reject the null hypothesis. This indicates that the Quality group adds significant information for predicting the Sale Price.

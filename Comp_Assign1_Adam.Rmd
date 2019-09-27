@@ -1,0 +1,340 @@
+---
+title: "MSDS 410 Computational Assignment 1"
+author: "Jason Adam"
+date: "2019-07-07"
+output: pdf_document
+---
+
+```{r knitr_options, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+# Introduction & Problem Statement  
+The dataset provided includes data on all 50 states in the United States. There are 12 variables for each observation, and each state represents one row or observation. The goal of this analysis is to develop and apply various linear models to the dataset to determine if the variables included can be used to predict Household income.
+
+# Population of Interest  
+There are 10 continuous variables in this particular dataset. The variables *State, Region,* and *Population* are considered demographic variables and will not be considered potential response variables. The remaining 10 continuous variables can all be considered both explanatory and response variables. There is no population of interest in this particular analysis as the data is aggregated to a state level and there are only 2 variables that differentiate the observations (State & Region). Given that there are only 50 observations total, we will include all states in our analysis. For the duration of this analysis we'll consider the variable **HouseholdIncome** to be the response variable (Y). As previously mentioned, **State, Region,** and **Population** will be considered demographic variables.
+
+```{r load_libraries}
+library(readr)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(corrplot)
+library(purrr)
+```
+
+
+```{r load_dataset, echo=FALSE, include=FALSE}
+# Read in data
+state_df <- read_csv("USStates.csv")
+
+# Create subset without demographic variables
+sub_df <- state_df %>%
+  select(-c("State", "Region", "Population"))
+
+```
+
+# EDA  
+## Summary Statistics
+Summary statistics were obtained for the 10 continuous variables included in the dataset. The results can been in the table below.
+
+```{r summary_stats}
+# Function to compute summary statistics for all continuous variables
+myfunct1 <- function(x) {
+  c(
+    "Stand dev" = round(sd(x, na.rm = TRUE), digits = 2),
+    "Mean" = round(mean(x, na.rm = TRUE), digits = 2),
+    "Median" = round(median(x), digits = 2),
+    "Minimum" = round(min(x, na.rm = TRUE), digits = 2),
+    "Maximum" = round(max(x, na.rm = TRUE), digits = 2)
+  )
+}
+
+# Apply  the function to subset of data (remove demographic fields)
+summary_numeric_df <- state_df %>%
+  select(-c("State", "Region", "Population")) %>%
+  map( ~ myfunct1(.)) %>%
+  as.data.frame()
+
+# Retrieve Row Names
+row_names <- row.names(summary_numeric_df)
+
+# Re-combine the dataframe in more readable format
+summary_numeric_df <- cbind(summary_numeric_df, row_names) %>%
+  gather(key = Variable, value = value, -row_names) %>%
+  spread(key = row_names, value = value)
+
+# Table output
+knitr::kable(summary_numeric_df)
+```
+
+## Scatterplot Matrix  
+Each of the 9 continuous explanatory variables were plotted against the response variable (HouseholdIncome) as a first step in determining if there was any noticeable relationship. It appears that several of the explanatory variables have a linear relationship with HouseholdIncome. Smokers seems to be negatively correlated with HouseholdIncome while College has a strong positive linear correlation.
+
+```{r scatter_matrix, fig.width=10, fig.height=10}
+par(mfrow = c(3, 3))
+
+
+for (i in 2:length(names(sub_df))) {
+  plot(
+    x = sub_df[[i]],
+    y = sub_df[[1]],
+    main = paste(names(sub_df[, 1]), "vs", names(sub_df[, i])),
+    xlab = names(sub_df[, i]),
+    ylab = names(sub_df[, 1]),
+    col = "purple",
+    pch = 16,
+    cex = 2
+  )
+}
+```
+
+## Correlation Coefficients  
+As a follow up to the scatter plots, Pearson Product Moment correlations were calculated for all non-demographic variables. The values can be seen in the table below. I've shortened the following variable names in order to produce a cleaner, more condensed table.  
+1. HI = HouseholdIncome  
+2. HS = Highschool  
+3. CL = College  
+4. SM = Smokers  
+5. PA = PhysicalActivity  
+6. OB = Obese  
+7. NW = NonWhite  
+8. HD = HeavyDrinkers  
+9. TP = TwoParents  
+10. IN = Insured
+
+```{r correlation_coefficients}
+# Create correlation dataframe
+corr_df <- sub_df %>%
+  mutate(
+    HI = HouseholdIncome,
+    HS = HighSchool,
+    CL = College,
+    SM = Smokers,
+    PA = PhysicalActivity,
+    OB = Obese,
+    NW = NonWhite,
+    HD = HeavyDrinkers,
+    TP = TwoParents,
+    IN = Insured
+  ) %>%
+  select(HI, HS, CL, SM, PA, OB, NW, HD, TP, IN)
+
+sub_cor <- round(cor(corr_df, method = "pearson"), digits = 2)
+
+# Print the df using kable
+knitr::kable(sub_cor)
+```
+
+The Pearson correlation coefficient is considered an index of linear association between two variables. This means that there is a lack of statistical independence between the aforementioned variables. The value always falls between **-1** and **1**. Values that are less than 0 represent a negative linear relationship (i.e. as *x* increases, *y* decreases). If the value is greater than 0 it represents a positive linear relationship between the variables. The closer to -1 or 1, the stronger the relationship.  
+  
+With that in mind, we can see from the correlation table above that we have several strong linear relationships with our response variable (HouseholdIncome). College has the strongest positive correlation (0.69) while Obese has the strongest negative (-0.65). Accompanied with our visual representations of the relationships above, we can say that this data is appropriate for linear modeling. None of the variables have obvious non-linear relationships with the response variable as shown in the scatter plots. The correlation table confirms that there are strong linear relationships between HouseholdIncome and several variables.
+
+# Modeling  
+## Model 1  
+The first linear model consists of the explanatory variable **College** and the response variable **HouseholdIncome**. College is an appropriate first variable to include in a linear model due to it having the highest linear correlation with the response variable.
+
+### Model Summary  
+Below we can see a comprehensive summary of Model 1. Several of the components from the summary will be used to understand and interpret the model in the following sections.
+
+```{r model1_fit}
+# Fit the model
+model1 <- lm(HouseholdIncome ~ College, data = state_df)
+
+# Model coefficients
+summary(model1)
+```
+
+### Model Coefficients & Equation
+Using these coefficients, we can represent the ordinary least squares linear model with the following formula:  
+
+$$
+\hat{Y}=23.0664+0.9801X
+$$
+
+The value 23.0664 in the above equation represents the the Y-intercept or the value of $Y$ when $X=0$. In the scope of our analysis, this means that the value of HouseholdIncome is 23.0664 when our College variable is equal to 0. If our population has no one with College education we can say the average HouseholdIncome is equal to 23.0664. This minimum household income in the dataset is 39, so this intercept value doesn't seem feasible. The intercept coefficient also has a standard error of 4.7187 with a corresponding t-value of 4.888. The t-value allows us to reject the null hypothesis that our intercept is equal to 0. Logically, an intercept of 0 wouldn't make sense as it would imply that our population had no household income unless they had a college education.  
+  
+The regression coefficient for the College variable is 0.9801. This means that for every 1 unit increase in College value, we can expect a 0.9801 unit increase in HouseholdIncome. The values in the dataset are considered averages or proportions that are representative of the population. With that in mind, the model is saying that if the proportion of the population with College education increases by 1, the HoueholdIncome should increase by 0.9801. As the population of a state becomes more educated, their income potential increases. This is a reasonable variable to include in future models.
+
+### ANOVA Table
+
+```{r model1_anova}
+anova(model1)
+```
+
+Our ANOVA table shows an F-value of 42.572 that allows us to reject the null hypothesis that our model coefficients are equal to 0.
+
+### R Squared
+
+```{r model1_rsquared}
+model1_rsquared <- summary(model1)$r.squared
+```
+
+The r-squared value for Model1 is `r model1_rsquared`. This means that approximately $47\%$ of the variance in $Y$ is explained with $X$.
+
+### Prediction & Residual Computations
+
+```{r model1_residuals}
+# Predicted values
+state_df$m1_pred <- predict.lm(model1, state_df)
+
+# Residuals
+state_df$m1_residual <- state_df$HouseholdIncome - state_df$m1_pred
+
+# Squared Residuals
+state_df$m1_resid_squared <- state_df$m1_residual ^ 2
+
+# Sum of Squared Residuals
+SSE <- sum(state_df$m1_resid_squared)
+
+# Sum of Squares Total
+state_df$m1_mean_deviate <-
+  state_df$HouseholdIncome - mean(state_df$HouseholdIncome)
+state_df$m1_mean_deviate_sq <- state_df$m1_mean_deviate ^ 2
+SST <- sum(state_df$m1_mean_deviate_sq)
+
+# Sum of Squares due to Regression
+state_df$m1_hat_deviate_bar <-
+  state_df$m1_pred - mean(state_df$HouseholdIncome)
+state_df$m1_hat_deviate_sq <- state_df$m1_hat_deviate_bar ^ 2
+SSR <- sum(state_df$m1_hat_deviate_sq)
+```
+
+The following values were calculated manually in order to validate the output results from Model1.  
+  
+*Sum of Squared Residuals = `r round(SSE, digits = 2)`*  
+*Sum of Squares Total = `r round(SST, digits = 2)`*  
+*Sum of Squares due to Regression = `r round(SSR, digits = 2)`*  
+*R Squared = `r round(SSR / SST, digits = 2)`*  
+
+If we look at the output from our ANOVA table in the section above, we can see that we've correctly calculated the values.
+
+## Model 2  
+Model 2 was built using HouseholdIncome as the response variable and **College** and **Insured** as the explanatory variables.  
+  
+### Model Summary  
+We can see the comprehensive summary from our model output below.  
+
+```{r model2_summary}
+model2 <- lm(HouseholdIncome ~ College + Insured, data = state_df)
+
+summary(model2)
+```
+
+### Model Coefficients & Equation  
+Using the coefficients from the summary above, the OLS regression equation is as follows:  
+  
+$$
+\hat{Y}=9.6728+0.8411X_{1}+0.2206X_{2}
+$$
+
+The intercept coefficient is now 9.6728. This means that if all explanatory values are equal to zero, the average HouseholdIncome would be equal to 9.6728. This value can not be used in the model. The standard error is 14.8628 with an associated t-value of 0.651. There is not enough evidence to reject the null hypothesis that the intercept equals 0. The College regression coefficient is equal to 0.8411 which indicates that a 1 unit increase in the College proportion will result in a 0.8411 increase in average Household Income when all other variables are held constant. The coefficient for the College variable has decreased, but it is still considered statistically significant to the model with a p-value of 0.000216. The Insured coefficient is 0.2206. This means that for a 1 unit increase in the proportion of people insured, the average household income will increase 0.2206. This regression coefficient is not a meaningful addition to the model. The standard error is greater than the coefficient value indicating that the coefficient could in fact be of the opposite sign or zero. Because of the t-value of the coefficient, we can not reject the null hypothesis that it is zero. This variable should not be retained for future models.  
+  
+### R Squared  
+The r-squared value for Model2 is 0.48. This is an increase of **0.01** from Model1 (0.47). This means that by adding the Insured variable, our model was only able to account for an additional $1\%$ of the variance in household income. Seeing as how adding variables inherently increases the r-squared value, the addition of Insured as an explanatory variable hasn't yielded anything meaningful.
+
+## Additional Models  
+
+```{r additional_models}
+model3 <-
+  lm(HouseholdIncome ~ College + Insured + HighSchool, data = state_df)
+m3_r <- summary(model3)$r.squared
+
+model4 <-
+  lm(HouseholdIncome ~ College + Insured + HighSchool + Smokers, data = state_df)
+m4_r <- summary(model4)$r.squared
+
+model5 <-
+  lm(HouseholdIncome ~ College + Insured + HighSchool + Smokers + PhysicalActivity,
+     data = state_df)
+m5_r <- summary(model5)$r.squared
+
+model6 <-
+  lm(
+    HouseholdIncome ~ College + Insured + HighSchool + Smokers + PhysicalActivity + Obese,
+    data = state_df
+  )
+m6_r <- summary(model6)$r.squared
+
+model7 <-
+  lm(
+    HouseholdIncome ~ College + Insured + HighSchool + Smokers + PhysicalActivity + Obese + NonWhite,
+    data = state_df
+  )
+m7_r <- summary(model7)$r.squared
+
+model8 <-
+  lm(
+    HouseholdIncome ~ College + Insured + HighSchool + Smokers + PhysicalActivity + Obese + NonWhite + HeavyDrinkers,
+    data = state_df
+  )
+m8_r <- summary(model8)$r.squared
+
+model9 <-
+  lm(
+    HouseholdIncome ~ College + Insured + HighSchool + Smokers + PhysicalActivity + Obese + NonWhite + HeavyDrinkers + TwoParents,
+    data = state_df
+  )
+m9_r <- summary(model9)$r.squared
+
+
+# Summary table of r-squared
+model_compare_df <- tibble(
+  "Variables" = c(
+    "CL + IN + HS",
+    "CL + IN + HS + SM",
+    "CL + IN + HS + SM + PA",
+    "CL + IN + HS + SM + PA + OB",
+    "CL + IN + HS + SM + PA + OB + NW",
+    "CL + IN + HS + SM + PA + OB + NW + HD",
+    "CL + IN + HS + SM + PA + OB + NW + HD + TP"
+  ),
+  "R-Squared" = c(m3_r, m4_r, m5_r, m6_r, m7_r, m8_r, m9_r)
+)
+
+knitr::kable(model_compare_df)
+```
+
+Utilizing the abbreviated column names from previous sections, we can see the effect additional explanatory variables have on the r-squared value. There is a drastic increase in the explained variability of household income when incorporating *Smokers* and *NonWhite* as explanatory variables. I believe that the variables College, Smokers and NonWhite should be retained for the final model. Their additions to the model yielded the biggest increase in the r-squared value. Intuitively, it makes sense that people who have gone to college on average make more money. It's also believable that on average, smokers and minority individuals make less.
+
+```{r additional_model_coefs}
+#print(model3$coefficients)
+#print(model4$coefficients)
+#print(model5$coefficients)
+#print(model6$coefficients)
+#print(model7$coefficients)
+#print(model8$coefficients)
+#print(model9$coefficients)
+```
+
+I observed some very odd things happening to the coefficients as I added additional explanatory variables. Some models ended up having a negative intercept coefficient which is impossible in this particular scenario. It's impossible for a state to have a negative average household income. Additionally, as more variables were added, some coefficients became negative while others were no longer statistically significant (i.e. can not reject the null hypothesis). All of this means that there would be a large amount of error in the model due to high error in the coefficients.
+
+## Model 3  
+The final model was fitted using College, Smokers, and NonWhite as explanatory variables.  
+
+### Model Summary  
+The summary of the final model can be seen below.
+
+```{r final_summary}
+final_model <- lm(HouseholdIncome ~ College + Smokers + NonWhite, data = state_df)
+summary(final_model)
+```
+
+### Model Coefficients & Equation  
+With the coefficients from the model summary, the regression equation is as follows:  
+
+$$
+\hat{Y}=42.71490+0.76050X_{1}-0.84743X_{2}+0.15762X_{3}
+$$
+
+The intercept coefficient is 42.71490. This means that if all of the explanatory variables are equal to 0 then the average household income is 42.71490. This coefficient has a corresponding t-value of 4.972 which allows us to reject the null hypothesis that it's zero. This intercept value is believable as the minimum household income value is 39. The College coefficient equals 0.76050. As the proportion of the population who've attended college increases 1 percent, the average household income will increase 0.76050. The Smokers regression coefficient equals -0.84743. As the proportion of the population who smoke increases 1 percent, the average household income will decrease by 0.84743 units. The NonWhite regression coefficient equals 0.15762. I will admit that I found this particular coefficient to be counter intuitive. This means that as the proportion of minorities increases, the average household income increases.  
+  
+### R Squared  
+The r-squared value for the final model is `r summary(final_model)$r.squared`. The model has accounted for $64\%$ of the variance in household income. The peak r-squared that our model achieved when all variables were used was 0.73.  
+  
+I think that it's necessary to re-fit the model with these variables because they appear to have the biggest impact on explaining the variance in the response variable. The additional variables don't add much value to the model and increase the chance for unaccounted interaction effects.  
+  
+# Conclusion & Reflection  
+Overall, there are several promising variables in the dataset that can help us understand the average household income. From the analysis performed, I can conclude that a well educated and relatively healthy population has a higher average household income. Populations that have higher rates of unhealthy behavior like smoking tend to have lower average household income. I would recommend that preventative health programs be put in place to prevent individuals from taking up smoking as well as educating those who already smoke on it's dangers to their health and long-term financial potential. If a population is generally unhealthy and has lower average household income, then there are typically higher associated healthcare costs. I would also recommend encouraging individuals to attend college in some capacity as it helps their future earning potential.  
+  
+Overall, I feel like I learned a great deal from this assignment. I've never really approached modeling from the perspective of conducting a hypothesis test on the actual regression coefficients. One thing that I found to be somewhat incorrect about this analysis was the fact that we performed the model fits on the entire dataset. I suspect that several of the models would not generalize well to unseen data due to the high standard error in some of the explanatory variable's coefficients. I understand that the goal of this assignment was to learn and apply the regression equation to a dataset, so I took that into mind.

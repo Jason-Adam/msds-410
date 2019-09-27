@@ -1,0 +1,344 @@
+---
+title: "Modeling Assignment 4"
+output: pdf_document
+author: Jason Adam
+date: August 31, 2019
+---
+
+# The Wine Study  
+## Introduction  
+A large wine manufacturer is studying their data in order to predict the number of wine cases ordered based upon the wine characteristics. If the wine manufacturer can predict the number of cases, then that manufacturer will be able to adjust their wine offering to maximize sales. But, it is also important to understand what influences purchase decisions as well as what contributes to the quality of the wine. 
+
+For this project, you may choose one of three response variables for which you will build a predictive model.  The possible response variables are:  
+
+1. Purchase Decision (PURCHASE)  
+2. The ration of the wine (STARS)  
+3. The number of cases of wine sold (CASES)
+
+## Variable of Interest  
+I've decided to build a model to predict whether a customer will make a purchase or not. The response variable for the project will be PURCHASE (1 = Purchased, 0 = Not Purchased).
+
+```{r echo=FALSE}
+# Global Knitr Options
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.align = "center")
+```
+
+```{r}
+# Imports
+library(dplyr)
+library(tidyr)
+library(readr)
+library(ggplot2)
+library(knitr)
+library(purrr)
+```
+
+```{r}
+# Load the dataframe
+mydf <- read_csv("wine.csv")
+```
+
+```{r}
+##############################################
+# Functions
+##############################################
+# Summary table of numeric variables
+summary_func <- function(x) {
+  c(
+    "Std" = round(sd(x, na.rm = TRUE), digits = 2),
+    "Avg" = round(mean(x, na.rm = TRUE), digits = 2),
+    "Med" = round(median(x, na.rm = TRUE), digits = 2),
+    "Min" = round(min(x, na.rm = TRUE), digits = 2),
+    "Mas" = round(max(x, na.rm = TRUE), digits = 2),
+    "NA Cnt" = sum(is.na(x)),
+    "< 0 Count" = sum(ifelse(x < 0, 1, 0), na.rm = TRUE),
+    "Med > 0" = round(median(ifelse(x < 0, NA, x), na.rm = TRUE), digits = 2)
+  )
+}
+##############################################
+# Dataframe Shape
+shape <- function(df) {
+  return(list(nrow(df), length(df)))
+}
+```
+
+# Exploratory Data Analysis & Data Prep  
+## High-Level Overview  
+
+```{r}
+mydf_shape <- shape(mydf)
+```
+
+The wine dataset consists of `r mydf_shape[1]` observations and `r mydf_shape[2]` variables.
+
+## Summary Statistics  
+Below is a high-level summary of the numeric variables in the dataset. The NA values were removed for the summary statistic calculations, but an additional column was added to capture their counts. We can immediately see that several of the variables have negative values. These will be investigated further in the following sections. There are several variables that appear to have high counts of NA values. There are also a considerable amount of observations that have negative values for certain variables. Each of these issues will be addressed in turn.
+
+```{r}
+# Summary Table of Numeric Variables
+summary_numeric_df <- mydf %>%
+  select(-INDEX) %>%
+  select_if(is.numeric) %>%
+  map(~ summary_func(.)) %>%
+  as.data.frame()
+
+row_names <- row.names(summary_numeric_df)
+
+summary_numeric_df <- cbind(summary_numeric_df, row_names) %>%
+  gather(key = key, value = value,-row_names) %>%
+  spread(key = row_names, value = value)
+
+summary_numeric_df %>%
+  kable()
+```
+
+### Negative Values  
+After examining the negative values, I've decided to flip their sign. Negative values are impossible for these values, and I will operate under the assumption that they are data entry errors.  
+
+### Missing Values (i.e. NAs)  
+After flipping the signs to positive, I replaced all the NA values with the median of the column. This allowed me to preserve as many observations as possible, otherwise a significant portion of the dataset would have to be discarded.  
+
+Below is a similar summary as before, but with the imputation mentioned. We can see that the negative values are now gone as well as the NAs.
+
+```{r}
+# Get Rid of uncessary columns
+cdf <- mydf %>%
+  mutate(HasSTARS = ifelse(is.na(STARS), 0, 1)) %>%
+  select(-INDEX,-Cases,-STARS)
+
+# Flip Negative Signs
+cdf <- cdf %>%
+  mutate_all(~if_else(. < 0, . * -1, . ))
+
+# Replace NA's with Median
+cdf <- cdf %>%
+  mutate_all(~if_else(is.na(.), median(., na.rm = TRUE), .))
+```
+
+```{r}
+# Summary Table of Numeric Variables
+new_summary_numeric_df <- cdf %>%
+  select_if(is.numeric) %>%
+  map( ~ summary_func(.)) %>%
+  as.data.frame()
+
+new_row_names <- row.names(new_summary_numeric_df)
+
+new_summary_numeric_df <-
+  cbind(new_summary_numeric_df, new_row_names) %>%
+  gather(key = key, value = value, -new_row_names) %>%
+  spread(key = new_row_names, value = value)
+
+new_summary_numeric_df %>%
+  kable()
+```
+
+In addition to the data cleaning, I've added a variable, **HasSTARS**. The original STARS variable had a large number of NA values. I decided to code it as a binary indicator (i.e. 1 = Has STARS Score; 0 = No STARS Score).
+
+## EDA  
+### Histograms of Continuous Variables  
+Below is a grid of histograms of the continuous variables in the dataset. We can see that 3 variables appear to close to normally distributed while the others are right-skewed. The right-skewed variables could prove problematic during modeling.
+
+```{r fig.height=8, fig.width=8}
+par(mfrow = c(4, 3))
+
+for (i in 2:12) {
+  hist(
+    x = cdf[[i]],
+    main = names(cdf[, i]),
+    xlab = names(cdf[, i]),
+    col = "purple"
+  )
+}
+```
+
+## Summary of Response Variable  
+Below we can see that the Purchase variable is not evenly split. Roughly 78.5% of the values are equal to 1, indicating a purchase. The variable is already dummy-encoded for us, so no further processing is needed.
+
+```{r}
+kable(table(cdf$Purchase, dnn = "Purchase"))
+```
+
+### Correlation of Variables  
+Below is a correlation matrix of the variables. There appears to be very little linear correlation between variables. The only relationship that stands out is Purchase-HasSTARS along with a could minor associations. This does not bode particularly well for our modeling, but it means that we don't have collinearity amongst of independent variables which is a good thing.
+
+```{r fig.align="left", fig.width=6, fig.height=6}
+corrplot::corrplot(cor(cdf))
+```
+
+In addition to the correlation matrix, I examined a boxplot for each continuous variable split by Purchase. There was little-to-no difference between Purchase = 0 and Purchase = 1 for any of the variables. I didn't include any visualizations of this piece due to lack of anything interesting.
+
+# Modeling Work
+
+## Train & Test Split  
+I've decided to perform a training and testing split of the dataset. I've dropped a few unimportant variables from the original dataset. Here are the variables and the explanation for dropping:  
+
+1. INDEX: Serves no purpose in the dataset.  
+2. STARS: Too many NA values, changed to binary variable.  
+3. Cases: There are only cases if there is a purchase, the variable is meaningless for modeling whether someone will make a purchase or not.  
+
+For the modeling portion of this project, I'll be employing a 70/30 split. This means that I'll be training models on 70% of the data and validating them on the remaining 30%. This will allow me to see if a model generalizes well to unseen data.
+
+```{r}
+# Set seed
+set.seed(123)
+
+# Random number between 0 & 1
+cdf$rand <- runif(n = dim(cdf)[1],
+                  min = 0,
+                  max = 1)
+
+# Create the splits
+tdf <- subset(cdf, rand < 0.7)
+vdf <- subset(cdf, rand >= 0.7)
+
+# Drop the rand column
+tdf <- tdf %>% dplyr::select(-rand)
+vdf <- vdf %>% dplyr::select(-rand)
+```
+
+```{r}
+# Summary of observations
+kable(data.frame(
+  "DataFrame" = c("Training Data", "Validation Data"),
+  "ObsCounts" = c(nrow(tdf), nrow(vdf)),
+  "PercentOfObs" = c(round(nrow(tdf) / nrow(cdf), digits = 3), round(nrow(vdf) / nrow(cdf), digits = 3))
+))
+```
+
+## Variable Selection  
+For this project I'm going to perform a logistic regression to predict if a purchase will be made or not. I'm going to start by utilizing an automated feature selection technique as a starting point. I'll start off by defining 3 models that will be used in the process:  
+
+1. Full Model = All potential explanatory variables included  
+2. Low Model = Intercept model (no independent variables included)  
+3. Midline Model = Model with independent variable with highest correlation to **Purchase** (i.e. HasSTARS)  
+
+These three models will be used in Stepwise model selection. I will utilize a forward pass, backward pass, and dual (forward and backward).  
+
+### Forward Model  
+Below we can see the variance inflation factors from our forward stepwise logistic regression. There is nothing concerning about these values. If we had values ranging from 5 - 10, it would give cause to investigate collinearity between the independent variables, but the VIF values are low.
+
+```{r}
+library(MASS)
+```
+
+```{r}
+# Define the upper model as the FULL model
+full_model <- glm(Purchase ~ ., data = tdf, family = binomial)
+
+# Define the lower model as the Intercept model
+low_model <- glm(Purchase ~ 1, data = tdf, family = binomial)
+
+# STARS glm
+star_glm <- glm(Purchase ~ HasSTARS, data = tdf, family = binomial)
+```
+
+```{r include=FALSE}
+# Call stepAIC() for variable selection
+forward_glm <-
+  stepAIC(
+    object = low_model,
+    scope = list(upper = formula(full_model), lower =  ~ 1),
+    direction = c('forward')
+  )
+
+forw_summ <- summary(forward_glm)
+```
+
+```{r}
+forward_vif <- HH::vif(forward_glm)
+knitr::kable(data.frame(forward_vif))
+```
+
+### Backward Model  
+Below we can see the VIF values from our backward stepwise model. Again there is no cause for concern regarding collinearity.
+
+```{r include=FALSE}
+backward_glm <- stepAIC(object = full_model, direction = c('backward'))
+back_summ <- summary(backward_glm)
+```
+
+```{r}
+back_vif <- HH::vif(backward_glm)
+knitr::kable(data.frame(back_vif))
+```
+
+### Stepwise Model  
+The stepwise model is showing similar VIF values.
+
+```{r include=FALSE}
+stepwise_glm <-
+  stepAIC(
+    object = star_glm,
+    scope = list(upper = formula(full_model), lower =  ~ 1),
+    direction = c('both')
+  )
+
+step_sum <- summary(stepwise_glm)
+```
+
+```{r}
+stepwise_vif <- HH::vif(stepwise_glm)
+knitr::kable(data.frame(stepwise_vif))
+```
+
+## Model Comparison  
+Now that we have three models trained, we need to compare their diagnostic values on the test data. We'll further validate against our test data shortly.
+
+```{r}
+AIC_list <-
+  c(AIC(forward_glm),
+    AIC(backward_glm),
+    AIC(stepwise_glm))
+
+BIC_list <-
+  c(BIC(forward_glm),
+    BIC(backward_glm),
+    BIC(stepwise_glm))
+
+knitr::kable(data.frame(
+  Model = c("Forward", "Backward", "Stepwise"),
+  AIC = AIC_list,
+  BIC = BIC_list
+))
+```
+
+We can see from our summary table that all three methods converged on the same model, resulting in the same AIC and BIC values. I will pick the stepwise model and use it to validate against the test set.  
+
+Prior to checking the accuracy of the model, here is the actual summary that the stepwise algorithm converged on.  
+
+```{r}
+summary(stepwise_glm)
+```
+
+Based on the model summary, whether or not the wine has STAR ratings is the biggest influencer in terms of shifting the log odds ratio.
+
+### Training Data  
+Based on the training data, our model has achieved 84.3% accuracy. If you recall, our baseline accuracy was less than 80%, so our model has only increased our prediction accuracy on the training data by roughly 5%.
+
+```{r}
+train_prob <- stepwise_glm %>% predict(tdf, type = "response")
+train_pred_class <- ifelse(train_prob > 0.5, 1, 0)
+
+table(tdf$Purchase, train_pred_class, dnn = c("Purchase", "Predict"))
+```
+
+### Test Data  
+We'll now fit the model to our unseen test data to see if it will generalize well. It looks like our test data has reached an accuracy of 85.1%! This is actually higher than our training set. 
+
+```{r}
+test_prob <- stepwise_glm %>% predict(vdf, type = "response")
+test_pred_class <- ifelse(test_prob > 0.5, 1, 0)
+
+table(vdf$Purchase, test_pred_class, dnn = c("Purchase", "Predict"))
+```
+
+# Conclusions & Reflections  
+Overall, the final model has achieved a prediction accuracy better than the baseline proportions in our data. I'm leery to utilize nuanced features regarding the chemical composition of the wine as predictors for a purchase. Unless these attributes are readily available to the consumer, I don't see how they could have a realistic impact on purchase patterns. The only real variable that makes sense is the binary variable regarding whether or not they have a STAR rating. Due to lack of data, the variable was converted to a binary representation, but I think additional information could be gleaned by requesting ratings on more wines so that it's actual STAR value could be used in the modeling process.
+
+Overall, I've learned an awful lot about modeling in this class. It's the first class where I've really felt like a "data scientist". Modeling is a rigorous and time consuming process if you want to be thorough and understand what is happening in your model. My advice to those wishing to enter this field of study would be to take your time, you can't learn it all at once. There is a never-ending stream of information, you just have to know how to regulate your intake from time-to-time.  
+
+Thanks for a great term!
+
+Cheers,
+Jason Adam
